@@ -91,10 +91,16 @@
     layers.edges = svg('g', { class: 'edges' }, root);
     layers.trail = svg('g', { class: 'trail' }, root);
     layers.houses = svg('g', { class: 'houses' }, root);
-    layers.bill = svg('g', { class: 'bill', 'aria-hidden': 'true' }, root);
-    svg('rect', { x: -17, y: -9, width: 34, height: 18, rx: 2 }, layers.bill);
-    svg('text', { y: 3.5 }, layers.bill).textContent = '100';
-    layers.bill.style.display = 'none';
+    // 每张钞票一个小钞票；0 号最后画，压在最上面。
+    layers.bills = [];
+    for (let k = sim.state.bills.length - 1; k >= 0; k--) {
+      const g = svg('g', { class: k ? 'bill other' : 'bill', 'aria-hidden': 'true' }, root);
+      svg('rect', { x: -17, y: -9, width: 34, height: 18, rx: 2 }, g);
+      svg('text', { y: 3.5 }, g).textContent = '100';
+      g.style.display = 'none';
+      layers.bills[k] = g;
+    }
+    layers.bill = layers.bills[0];
 
     houses = town.residents.map((r) => {
       const g = svg('g', {
@@ -197,6 +203,21 @@
   function placeBill(p) {
     layers.bill.style.display = '';
     layers.bill.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ') rotate(-8)');
+  }
+
+  // 另外几张钞票夹在持有人房子的左上角，不做飞行动画。
+  function renderOtherNotes() {
+    sim.state.bills.forEach((note, k) => {
+      if (!k) return;
+      const g = layers.bills[k];
+      if (note.holder < 0) {
+        g.style.display = 'none';
+        return;
+      }
+      const r = sim.town.residents[note.holder];
+      g.style.display = '';
+      g.setAttribute('transform', 'translate(' + (r.x - 20 - (k - 1) * 8) + ' ' + (r.y - 26 + (k - 1) * 4) + ') rotate(8)');
+    });
   }
 
   // 手机上地图比屏幕宽：钞票换手时把镜头挪过去。
@@ -360,6 +381,11 @@
       strong.textContent = r.trade.title + r.name;
       where.append('现在在', strong, night ? '家的' + Story.place(r) + '里过夜。' : '手里，已经 ' + state.heldFor + ' 小时。');
     }
+    for (const note of state.bills.slice(1)) {
+      const tail = '尾号 ' + note.serial.split(' ')[1].slice(-4);
+      if (note.holder < 0) where.append('第二位外乡人明早到，会再带来一张（' + tail + '）。');
+      else where.append('另一张（' + tail + '）在' + town.residents[note.holder].name + '手里。');
+    }
     let longest = state.stats.longestHold;
     if (state.holder >= 0 && state.heldFor > longest.hours) longest = { id: state.holder, hours: state.heldFor };
     $('longest').textContent = longest.id >= 0 ? town.residents[longest.id].name + ' ' + longest.hours + ' 小时' : '—';
@@ -401,6 +427,12 @@
         time.textContent = clock(ev.hour).slice(-5);
         const p = document.createElement('p');
         p.textContent = line.text;
+        if (line.kind === 'rule') {
+          const tag = document.createElement('span');
+          tag.className = 'tag';
+          tag.textContent = '规矩';
+          p.prepend(tag);
+        }
         li.append(time, p);
       }
       frag.append(li);
@@ -426,6 +458,7 @@
     tile('commerce', fmt(stats.commerce) + ' 块', stats.commerce ? '住店、买米、做衣裳……' : '');
     tile('ious', fmt(stats.iouCreated) + ' 块', '零头算了的有 ' + fmt(stats.forgiven) + ' 块');
     tile('holders', stats.holders.size + ' 位', '全镇 ' + sim.town.residents.length + ' 户');
+    renderRuleLine();
     const punch = $('punchline');
     if (holder < 0) punch.textContent = '外乡人还没进镇。';
     else {
@@ -434,6 +467,30 @@
       punch.textContent =
         '全镇欠账从 ' + fmt(sim.state.initialGross) + ' 块' + (diff >= 0 ? '降到 ' : '涨到 ') + fmt(now) + ' 块。';
     }
+  }
+
+  // 开着的规矩在这座镇里做了多少事
+  function renderRuleLine() {
+    const R = sim.state.ruleStats;
+    const on = sim.rules;
+    const bits = [];
+    if (on.creditCap) bits.push('拒赊 ' + R.refused + ' 回' + (R.refusedCash ? '，其中当场现买 ' + fmt(R.refusedCash) + ' 块' : ''));
+    if (on.workoff) bits.push('帮工 ' + R.workdays + ' 天，抵掉 ' + fmt(R.workedOff) + ' 块');
+    if (on.patronage) bits.push('拿闲钱买东西 ' + fmt(R.patronage) + ' 块，其中特意照顾欠债人家 ' + fmt(R.patronageNeedy) + ' 块');
+    if (on.netting) bits.push('赶集清账 ' + R.clearings + ' 回，勾销 ' + fmt(R.cleared) + ' 块');
+    if (sim.state.bills.length > 1) {
+      let hands = 0;
+      for (const note of sim.state.bills.slice(1)) hands += note.stats.hands;
+      bits.push('另一张钞票转手 ' + hands + ' 次');
+    }
+    const line = $('ruleLine');
+    line.hidden = !bits.length;
+    line.textContent = '';
+    if (!bits.length) return;
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = '规矩';
+    line.append(tag, bits.join('；') + '。');
   }
 
   function niceMax(v) {
@@ -589,6 +646,7 @@
     renderEdges();
     renderHouses();
     renderTrail();
+    renderOtherNotes();
     renderNote();
     renderNumbers();
     renderChart();
@@ -633,7 +691,13 @@
   // ---------- 镇上的规矩 + 长期实验 ----------
 
   // 每条规矩在页面上的说法；key 对应引擎 createSim(seed, { rules }) 里的开关。
-  const RULE_COPY = [];
+  const RULE_COPY = [
+    { key: 'creditCap', title: '赊账有度', desc: '一个人欠全镇的账加起来过了 200 块，谁家都不肯再赊给这个人；兜里零钱够的，可以当场现买。' },
+    { key: 'workoff', title: '以工抵债', desc: '欠了 200 块以上、手头没钱、又一个礼拜没摸到钞票的人，去最大的债主那里帮一天工，30 块工钱抵账。' },
+    { key: 'patronage', title: '照顾生意', desc: '手头宽裕的人常拿闲钱出门买东西，一半时候特意去欠债的人家照顾生意；收了现钱的人转手先还账。' },
+    { key: 'netting', title: '三角债清理', desc: '逢七赶集，商会账房把绕成圈的欠账（甲欠乙、乙欠丙、丙又欠甲）按圈上最小的一笔对冲掉。' },
+    { key: 'secondTraveler', title: '第二位外乡人', desc: '第 2 天早上又来一位外乡人，也付一张百元钞住一晚，镇上的整钞多了一倍。' },
+  ];
   const LAB_TOWNS = 40;
   const LAB_DAYS = 365;
   let rules = {};
@@ -648,10 +712,10 @@
 
   function buildRules() {
     const box = $('rules');
-    box.querySelectorAll('.rule').forEach((n) => n.remove());
+    box.querySelectorAll('.rule-card').forEach((n) => n.remove());
     for (const r of RULE_COPY) {
       const label = document.createElement('label');
-      label.className = 'rule';
+      label.className = 'rule-card';
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.id = 'rule-' + r.key;
@@ -694,6 +758,8 @@
     lab.job = job;
     const total = runs.length * LAB_TOWNS;
     $('labMeter').hidden = false;
+    $('labMeter').firstElementChild.style.width = '0%';
+    $('labStatus').textContent = '正在模拟第 1 / ' + total + ' 座小镇……';
     renderLab();
     const slice = () => {
       if (lab.job !== job) return;
@@ -754,7 +820,7 @@
     if (m) {
       p.append('加上勾选的规矩，一年后欠账的中位数是开局的 ', strong(times(m.final)), '，' + trendText(m) + '；原来的规矩下是 ', strong(times(b.final)), '，' + trendText(b) + '。');
     } else {
-      p.append('照原来的规矩，一年后欠账的中位数是开局的 ', strong(times(b.final)), '，' + trendText(b) + '。最低点在第 ' + b.lowDay + ' 天，只有开局的 ' + times(b.low) + '。');
+      p.append('照原来的规矩，一年后欠账的中位数是开局的 ', strong(times(b.final)), '，' + trendText(b) + '。最低点在第 ' + b.lowDay + ' 天，只有开局的 ' + times(b.low) + '。勾上左边任意一条规矩，图上会多出一条线来对比。');
     }
   }
 
@@ -909,6 +975,7 @@
     document.title = '百元漂流记 · ' + sim.town.name;
     writeHash(seed);
     buildMap();
+    $('legendOther').hidden = sim.state.bills.length < 2;
     $('journal').textContent = '';
     $('person').hidden = true;
 
