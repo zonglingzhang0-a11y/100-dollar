@@ -1,0 +1,11 @@
+{
+  "name": "100-dollar",
+  "version": "1.0.0",
+  "description": "百元漂流记：跟着一张百元钞在小镇里转手，看它还清了多少账。",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test",
+    "start": "python3 -m http.server 8000"
+  }
+}
