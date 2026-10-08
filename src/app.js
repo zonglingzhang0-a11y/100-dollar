@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  const { createSim, clock, DAY_START, DAY_END, BILL } = window.Drift;
+  const { createSim, clock, dayOf, DAY_START, DAY_END, BILL } = window.Drift;
   const Story = window.Story;
   const Lab = window.Lab;
   const NS = 'http://www.w3.org/2000/svg';
@@ -37,6 +37,8 @@
   let edgeEls = new Map();
   let layers = {};
   let hover = -1; // 曲线上被指着的点
+  let renderedMarks = -1; // 票面痕迹列表上一次画了几条
+  let rebuilding = false; // 重画图表时，旧图失焦不算用户离开
 
   // ---------- 种子 ----------
 
@@ -383,7 +385,8 @@
     }
     for (const note of state.bills.slice(1)) {
       const tail = '尾号 ' + note.serial.split(' ')[1].slice(-4);
-      if (note.holder < 0) where.append('第二位外乡人明早到，会再带来一张（' + tail + '）。');
+      const today = dayOf(state.hour) >= note.arriveDay;
+      if (note.holder < 0) where.append('第二位外乡人' + (today ? '今早八点' : '明早') + '到，会再带来一张（' + tail + '）。');
       else where.append('另一张（' + tail + '）在' + town.residents[note.holder].name + '手里。');
     }
     let longest = state.stats.longestHold;
@@ -392,7 +395,8 @@
 
     const ol = $('marks');
     const marks = state.bill.marks;
-    if (ol.childElementCount === marks.length && marks.length) return;
+    if (renderedMarks === marks.length) return;
+    renderedMarks = marks.length;
     ol.textContent = '';
     if (!marks.length) {
       const li = document.createElement('li');
@@ -542,9 +546,13 @@
     if (data.length > 1) s += '<text class="label" x="' + (sx(x0) + 4) + '" y="' + (sy(data[0].value) - 9) + '">起初 ' + fmt(data[0].value) + '</text>';
     s += '<rect id="hit" x="' + pad.l + '" y="0" width="' + (W - pad.l - pad.r + 8) + '" height="' + H + '" fill="transparent"/>';
     s += '</svg><div class="tip" id="tip" hidden><strong></strong><span></span></div>';
+    const hadFocus = box.contains(document.activeElement);
+    rebuilding = true;
     box.innerHTML = s;
+    rebuilding = false;
 
     const chartSvg = box.querySelector('svg');
+    if (hadFocus) chartSvg.focus({ preventScroll: true });
     const pick = (clientX) => {
       const rect = chartSvg.getBoundingClientRect();
       const x = ((clientX - rect.left) / rect.width) * W;
@@ -561,8 +569,13 @@
     };
     chartSvg.addEventListener('pointermove', (e) => pick(e.clientX));
     chartSvg.addEventListener('pointerdown', (e) => pick(e.clientX));
-    chartSvg.addEventListener('pointerleave', () => showHover(-1));
-    chartSvg.addEventListener('blur', () => showHover(-1));
+    // 手指离开屏幕时也会触发 pointerleave：触屏上点一下就让提示留着，点别处（失焦）再收起。
+    chartSvg.addEventListener('pointerleave', (e) => {
+      if (e.pointerType !== 'touch') showHover(-1);
+    });
+    chartSvg.addEventListener('blur', () => {
+      if (!rebuilding) showHover(-1);
+    });
     chartSvg.addEventListener('keydown', (e) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
@@ -656,7 +669,7 @@
 
   function apply(events, animate) {
     let lastMove = null;
-    for (const ev of events) if (MOVES.has(ev.type)) lastMove = ev;
+    for (const ev of events) if (MOVES.has(ev.type) && !(ev.bill > 0)) lastMove = ev; // 只跟着 0 号钞票
     if (lastMove) {
       const from = lastMove.type === 'arrive' ? -1 : lastMove.from;
       if (animate) fly(from, lastMove.to);
@@ -692,7 +705,7 @@
 
   // 每条规矩在页面上的说法；key 对应引擎 createSim(seed, { rules }) 里的开关。
   const RULE_COPY = [
-    { key: 'creditCap', title: '赊账有度', desc: '一个人欠全镇的账加起来过了 200 块，谁家都不肯再赊给这个人；兜里零钱够的，可以当场现买。' },
+    { key: 'creditCap', title: '赊账有度', desc: '谁要是再赊一笔，欠全镇的账加起来就会过 200 块，谁家都不肯赊；兜里零钱够的，可以当场现买。' },
     { key: 'workoff', title: '以工抵债', desc: '欠了 200 块以上、手头没钱、又一个礼拜没摸到钞票的人，去最大的债主那里帮一天工，30 块工钱抵账。' },
     { key: 'patronage', title: '照顾生意', desc: '手头宽裕的人常拿闲钱出门买东西，一半时候特意去欠债的人家照顾生意；收了现钱的人转手先还账。' },
     { key: 'netting', title: '三角债清理', desc: '逢七赶集，商会账房把绕成圈的欠账（甲欠乙、乙欠丙、丙又欠甲）按圈上最小的一笔对冲掉。' },
@@ -721,8 +734,11 @@
       input.id = 'rule-' + r.key;
       input.checked = !!rules[r.key];
       input.addEventListener('change', () => {
+        // 重开小镇会改变上面几块的高度；把页面挪回去，让刚点的这条规矩还在指针底下
+        const before = input.getBoundingClientRect().top;
         rules[r.key] = input.checked;
         start(seed);
+        window.scrollBy(0, input.getBoundingClientRect().top - before);
       });
       const name = document.createElement('strong');
       name.textContent = r.title;
@@ -817,10 +833,12 @@
       el.textContent = t;
       return el;
     };
-    if (m) {
+    if (!m && activeRules()) {
+      p.append('照原来的规矩，一年后欠账的中位数是开局的 ', strong(times(b.final)), '，' + trendText(b) + '。勾选的规矩还在算……');
+    } else if (m) {
       p.append('加上勾选的规矩，一年后欠账的中位数是开局的 ', strong(times(m.final)), '，' + trendText(m) + '；原来的规矩下是 ', strong(times(b.final)), '，' + trendText(b) + '。');
     } else {
-      p.append('照原来的规矩，一年后欠账的中位数是开局的 ', strong(times(b.final)), '，' + trendText(b) + '。最低点在第 ' + b.lowDay + ' 天，只有开局的 ' + times(b.low) + '。勾上左边任意一条规矩，图上会多出一条线来对比。');
+      p.append('照原来的规矩，一年后欠账的中位数是开局的 ', strong(times(b.final)), '，' + trendText(b) + '。最低点在第 ' + b.lowDay + ' 天，只有开局的 ' + times(b.low) + '。勾上任意一条规矩，图上会多出一条线来对比。');
     }
   }
 
@@ -871,9 +889,13 @@
     s += '<text class="label" x="' + (pad.l + 6) + '" y="' + (sy(1) - 6) + '">开局</text>';
     s += '<line class="cross" id="labCross" y1="' + pad.t + '" y2="' + sy(0) + '" style="display:none"/>';
     s += '</svg><div class="tip" id="labTip" hidden></div>';
+    const hadFocus = box.contains(document.activeElement);
+    rebuilding = true;
     box.innerHTML = s;
+    rebuilding = false;
 
     const svgEl = box.querySelector('svg');
+    if (hadFocus) svgEl.focus({ preventScroll: true });
     const pick = (clientX) => {
       const rect = svgEl.getBoundingClientRect();
       const x = ((clientX - rect.left) / rect.width) * W;
@@ -882,8 +904,12 @@
     };
     svgEl.addEventListener('pointermove', (e) => pick(e.clientX));
     svgEl.addEventListener('pointerdown', (e) => pick(e.clientX));
-    svgEl.addEventListener('pointerleave', () => labHover(-1, series));
-    svgEl.addEventListener('blur', () => labHover(-1, series));
+    svgEl.addEventListener('pointerleave', (e) => {
+      if (e.pointerType !== 'touch') labHover(-1, series);
+    });
+    svgEl.addEventListener('blur', () => {
+      if (!rebuilding) labHover(-1, series);
+    });
     svgEl.addEventListener('keydown', (e) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
@@ -978,6 +1004,7 @@
     $('legendOther').hidden = sim.state.bills.length < 2;
     $('journal').textContent = '';
     $('person').hidden = true;
+    renderedMarks = -1;
 
     // 开场先走到外乡人进镇，这样一打开就有故事可看。
     const events = [];

@@ -189,6 +189,52 @@ test('以工抵债：只有欠得多、没零钱、好些天没摸到钞票的�
   assert.ok(workdays > 0);
 });
 
+test('以工抵债：“几天没摸到钞票”从钞票离手的那一刻算起', () => {
+  const W = Drift.RULE_PARAMS.workoff;
+  let checked = 0;
+  for (const seed of SEEDS) {
+    for (const rules of [{ workoff: true }, { workoff: true, secondTraveler: true }]) {
+      const sim = simFor(seed, rules);
+      for (let t = 0; t < MONTH * 4; t++) {
+        for (const ev of sim.step()) {
+          if (ev.type !== 'workoff') continue;
+          let last = Drift.DAY_START;
+          for (const note of sim.state.bills) {
+            for (const p of note.path) if (p.hour <= ev.hour && (p.to === ev.from || p.from === ev.from)) last = Math.max(last, p.hour);
+          }
+          assert.equal(ev.days, Math.floor((ev.hour - last) / 24), `${seed} ${Drift.clock(ev.hour)}`);
+          assert.ok(ev.days >= W.idleDays);
+          checked++;
+        }
+      }
+    }
+  }
+  assert.ok(checked > 20);
+});
+
+test('两张钞票在同一个人手里，持有的钟点也只算一遍', () => {
+  for (const seed of SEEDS.concat(['x136'])) {
+    const sim = simFor(seed, { secondTraveler: true });
+    for (let t = 0; t < MONTH; t++) sim.step();
+    // 第 h 个钟头开始时手里有钞票的人，这个钟头记一小时：拿到是第 r 个钟头、交出去是第 f 个钟头，就记 (r, f]
+    const hours = sim.state.people.map(() => new Set());
+    for (const note of sim.state.bills) {
+      let holder = -1;
+      let since = 0;
+      const close = (until) => {
+        if (holder >= 0) for (let h = since + 1; h <= until; h++) hours[holder].add(h);
+      };
+      for (const p of note.path) {
+        close(p.hour);
+        holder = p.to;
+        since = p.hour;
+      }
+      close(sim.state.hour);
+    }
+    sim.state.people.forEach((p, i) => assert.equal(p.hoursHeld, hours[i].size, `${seed} ${sim.town.residents[i].name}`));
+  }
+});
+
 test('照顾生意：抵账加现钱正好是货价', () => {
   let buys = 0;
   for (const seed of SEEDS) {

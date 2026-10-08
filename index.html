@@ -248,8 +248,8 @@ button, input { font: inherit; color: inherit; }
 .journal .mark p { color: var(--gold); }
 .tag {
   display: inline-block; margin-right: 6px; padding: 0 5px; vertical-align: 1px;
-  border: 1px solid var(--note); border-radius: 3px;
-  font: 11px/1.55 var(--font-body); letter-spacing: 0.12em; color: var(--note);
+  border: 1px solid var(--accent); border-radius: 3px;
+  font: 11px/1.55 var(--font-body); letter-spacing: 0.12em; color: var(--accent);
 }
 .rule-line { margin: 0; font-size: 14px; color: var(--ink-2); max-width: 75ch; }
 .journal .day {
@@ -486,9 +486,9 @@ details.table-view summary { cursor: pointer; color: var(--ink-2); font-size: 13
       <div class="lab-run">
         <div class="lab-actions">
           <div class="meter" id="labMeter" hidden><span></span></div>
-          <span class="lab-status" id="labStatus" aria-live="polite"></span>
+          <span class="lab-status" id="labStatus"></span>
         </div>
-        <p class="lab-verdict" id="labVerdict"></p>
+        <p class="lab-verdict" id="labVerdict" aria-live="polite"></p>
         <ul class="lab-legend" id="labLegend">
           <li><svg class="key" viewBox="0 0 22 10" aria-hidden="true"><line class="k-base" x1="1" y1="5" x2="21" y2="5"/></svg>原来的规矩</li>
           <li id="labLegendNew"><svg class="key" viewBox="0 0 22 10" aria-hidden="true"><line class="k-new" x1="1" y1="5" x2="21" y2="5"/></svg>勾选的规矩</li>

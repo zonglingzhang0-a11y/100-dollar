@@ -67,7 +67,9 @@
         const start = sim.state.initialGross || 1;
         const row = new Array(days);
         for (let d = 0; d < days; d++) {
-          for (let h = 0; h < 24; h++) sim.step();
+          // 第 d+1 天 20:00 是最后一个做买卖的钟头，算完就是当天收工后的账
+          const close = d * 24 + Drift.DAY_END - 1;
+          while (sim.state.hour < close) sim.step();
           row[d] = sim.grossDebt() / start;
         }
         daily.push(row);

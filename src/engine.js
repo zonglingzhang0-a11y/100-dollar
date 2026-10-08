@@ -306,7 +306,7 @@
         },
       });
     }
-    // 每个人上一次拿到（任何一张）钞票的钟点，以工抵债要用
+    // 每个人上一次手里有（任何一张）钞票的钟点：拿到或交出去的时候都记一笔，以工抵债要用
     const lastTouch = rules.workoff ? new Array(n).fill(DAY_START) : null;
 
     const state = {
@@ -432,7 +432,10 @@
       st.hands++;
       st.holders.add(to);
       people[to].timesHeld++;
-      if (lastTouch) lastTouch[to] = state.hour;
+      if (lastTouch) {
+        lastTouch[to] = state.hour;
+        if (from >= 0) lastTouch[from] = state.hour; // 交出去那一刻也算摸过
+      }
       note.wear += rng.int(1, 3) / 10; // 每过一次手磨损一点点
       note.path.push({ hour: state.hour, from, to });
       maybeMark(note, to, events);
@@ -585,7 +588,7 @@
       if (rules.creditCap && before + price > 0) {
         const after = payables(buyer) - Math.max(0, before) + (before + price);
         if (after > rules.creditCap.cap) {
-          const ev = { type: 'refused', hour: state.hour, from: buyer, to: shop, item: it[0], price, total: payables(buyer), paid: 0 };
+          const ev = { type: 'refused', hour: state.hour, from: buyer, to: shop, item: it[0], price, total: payables(buyer), cap: rules.creditCap.cap, paid: 0 };
           if (people[buyer].cash >= price) {
             moveCash(buyer, shop, price); // 现买：一手交钱一手交货
             ev.paid = price;
@@ -768,17 +771,25 @@
       if (note.id === 0) state.arrivalChange = change;
     }
 
+    // 这一个钟头里谁手里有钞票：每张钞票各记一小时；同一个人攥着两张，也只算这个人拿着钱过了一小时。
+    function countHeldHour() {
+      const seen = [];
+      for (const note of notes) {
+        if (note.holder < 0) continue;
+        note.heldFor++;
+        if (seen.indexOf(note.holder) < 0) {
+          seen.push(note.holder);
+          people[note.holder].hoursHeld++;
+        }
+      }
+    }
+
     function step() {
       state.hour++;
       const events = [];
       const hh = state.hour % 24;
-      if (hh < DAY_START || hh >= DAY_END) {
-        for (const note of notes) {
-          if (note.holder >= 0) people[note.holder].hoursHeld++;
-          note.heldFor++;
-        }
-        return events;
-      }
+      countHeldHour();
+      if (hh < DAY_START || hh >= DAY_END) return events;
       if (hh === DAY_START) {
         events.push({ type: 'dawn', hour: state.hour, day: dayOf(state.hour) });
         for (const note of notes) note.movedToday = false;
@@ -789,8 +800,6 @@
           if (hh >= 8 && dayOf(state.hour) >= note.arriveDay) arrive(note, events);
         } else {
           inTown = true;
-          people[note.holder].hoursHeld++;
-          note.heldFor++;
           if (!holderActs(note, events)) note.stats.idleHours++;
         }
       }

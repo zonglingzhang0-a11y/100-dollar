@@ -103,10 +103,10 @@
       case 'refused': {
         const buyer = resident(town, ev.from).name;
         const shop = resident(town, ev.to);
-        let s = who(town, ev.from) + '想在' + shop.trade.shop + '赊' + ev.item + '（' + yuan(ev.price) + '），';
+        let s = who(town, ev.from) + '想在' + shop.trade.shop + '赊账：' + ev.item + '（' + yuan(ev.price) + '）。';
         s += variant(ev, [
-          shop.name + '摇摇头：镇上谁都知道' + buyer + '已经欠了 ' + yuan(ev.total) + '，不敢再赊。',
-          shop.name + '翻了翻账本：' + buyer + '前前后后欠了 ' + yuan(ev.total) + '，这回不能再赊了。',
+          shop.name + '摇摇头：镇上谁都知道' + buyer + '已经欠了 ' + yuan(ev.total) + '，再赊这一笔就过 ' + yuan(ev.cap) + '了，不敢再赊。',
+          shop.name + '翻了翻账本：' + buyer + '前前后后欠了 ' + yuan(ev.total) + '，加上这一笔就过 ' + yuan(ev.cap) + '了，这回不能再赊。',
         ]);
         return s + (ev.paid ? buyer + '只好数出 ' + yuan(ev.paid) + '零钱现买。' : buyer + '只好空着手回去。');
       }
@@ -115,7 +115,7 @@
         const goods = ev.item + '（' + yuan(ev.price) + '）';
         let s = ev.needy
           ? who(town, ev.from) + '知道' + who(town, ev.to) + '最近手头紧，特意去' + seller.trade.shop + '照顾生意，买了' + goods
-          : who(town, ev.from) + '拿零钱到' + seller.trade.shop + '买了' + goods;
+          : who(town, ev.from) + '到' + seller.trade.shop + '买了' + goods;
         if (ev.offset && ev.cash) s += '：' + yuan(ev.offset) + '从' + seller.name + '欠的账里扣，另付 ' + yuan(ev.cash) + '零钱。';
         else if (ev.offset) s += '，记在' + seller.name + '欠的账上抵掉。';
         else s += '，当场付了零钱。';
