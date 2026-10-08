@@ -38,7 +38,6 @@
   let layers = {};
   let hover = -1; // 曲线上被指着的点
   let renderedMarks = -1; // 票面痕迹列表上一次画了几条
-  let rebuilding = false; // 重画图表时，旧图失焦不算用户离开
 
   // ---------- 种子 ----------
 
@@ -506,8 +505,62 @@
 
   let chartGeom = null;
 
+  // 图表的外壳（<svg> 和提示框）只建一次，之后每次重画只换 <svg> 里面的内容，
+  // 这样键盘焦点、指针状态和提示都不会因为重画而丢掉。
+  function chartShell(box, label, tipId, on) {
+    let el = box.querySelector('svg');
+    if (el) return el;
+    box.textContent = '';
+    el = document.createElementNS(NS, 'svg');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('role', 'img');
+    el.setAttribute('aria-label', label);
+    const tip = document.createElement('div');
+    tip.className = 'tip';
+    tip.id = tipId;
+    tip.hidden = true;
+    box.append(el, tip);
+    el.addEventListener('pointermove', (e) => on.pick(e.clientX, el));
+    el.addEventListener('pointerdown', (e) => on.pick(e.clientX, el));
+    // 触屏上点一下就让提示留着，点别处（失焦）再收起；在图上滑动页面会触发 pointercancel，也收起。
+    el.addEventListener('pointerleave', (e) => {
+      if (e.pointerType !== 'touch') on.hide();
+    });
+    el.addEventListener('pointercancel', () => on.hide());
+    el.addEventListener('blur', () => on.hide());
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      on.step(e.key === 'ArrowLeft' ? -1 : 1, e.shiftKey);
+    });
+    return el;
+  }
+
   function renderChart() {
     const box = $('chart');
+    const el = chartShell(box, '全镇欠账总额随时间的变化', 'tip', {
+      pick: (clientX, svgEl) => {
+        if (!chartGeom) return;
+        const rect = svgEl.getBoundingClientRect();
+        const x = ((clientX - rect.left) / rect.width) * chartGeom.W;
+        const data = sim.state.grossDebt;
+        let best = 0;
+        let bestD = Infinity;
+        data.forEach((d, i) => {
+          const dd = Math.abs(chartGeom.sx(d.hour) - x);
+          if (dd < bestD) {
+            bestD = dd;
+            best = i;
+          }
+        });
+        showHover(best);
+      },
+      hide: () => showHover(-1),
+      step: (dir) => {
+        const n = sim.state.grossDebt.length;
+        showHover(Math.max(0, Math.min(n - 1, hover < 0 ? n - 1 : hover + dir)));
+      },
+    });
     const data = sim.state.grossDebt;
     const W = Math.max(280, Math.round(box.clientWidth || 600));
     const H = 190;
@@ -521,8 +574,7 @@
     const sy = (v) => pad.t + (1 - v / ymax) * (H - pad.t - pad.b);
     chartGeom = { sx, sy, W, H, pad };
 
-    let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" tabindex="0" role="img" aria-label="全镇欠账总额随时间的变化">';
-    s += '<g class="grid">';
+    let s = '<g class="grid">';
     for (const v of [0, ymax / 2, ymax]) s += '<line x1="' + pad.l + '" x2="' + (W - pad.r) + '" y1="' + sy(v) + '" y2="' + sy(v) + '"/>';
     s += '</g><g class="axis">';
     for (const v of [0, ymax / 2, ymax]) s += '<text x="' + (pad.l - 8) + '" y="' + (sy(v) + 4) + '" text-anchor="end">' + fmt(v) + '</text>';
@@ -544,45 +596,11 @@
     s += '<circle class="dot" id="hoverDot" r="4.5" style="display:none"/>';
     s += '<text class="label" x="' + (sx(last.hour) + 9) + '" y="' + (sy(last.value) + 4) + '">' + fmt(last.value) + '</text>';
     if (data.length > 1) s += '<text class="label" x="' + (sx(x0) + 4) + '" y="' + (sy(data[0].value) - 9) + '">起初 ' + fmt(data[0].value) + '</text>';
-    s += '<rect id="hit" x="' + pad.l + '" y="0" width="' + (W - pad.l - pad.r + 8) + '" height="' + H + '" fill="transparent"/>';
-    s += '</svg><div class="tip" id="tip" hidden><strong></strong><span></span></div>';
-    const hadFocus = box.contains(document.activeElement);
-    rebuilding = true;
-    box.innerHTML = s;
-    rebuilding = false;
-
-    const chartSvg = box.querySelector('svg');
-    if (hadFocus) chartSvg.focus({ preventScroll: true });
-    const pick = (clientX) => {
-      const rect = chartSvg.getBoundingClientRect();
-      const x = ((clientX - rect.left) / rect.width) * W;
-      let best = 0;
-      let bestD = Infinity;
-      data.forEach((d, i) => {
-        const dd = Math.abs(sx(d.hour) - x);
-        if (dd < bestD) {
-          bestD = dd;
-          best = i;
-        }
-      });
-      showHover(best);
-    };
-    chartSvg.addEventListener('pointermove', (e) => pick(e.clientX));
-    chartSvg.addEventListener('pointerdown', (e) => pick(e.clientX));
-    // 手指离开屏幕时也会触发 pointerleave：触屏上点一下就让提示留着，点别处（失焦）再收起。
-    chartSvg.addEventListener('pointerleave', (e) => {
-      if (e.pointerType !== 'touch') showHover(-1);
-    });
-    chartSvg.addEventListener('blur', () => {
-      if (!rebuilding) showHover(-1);
-    });
-    chartSvg.addEventListener('keydown', (e) => {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      e.preventDefault();
-      const i = hover < 0 ? data.length - 1 : hover + (e.key === 'ArrowLeft' ? -1 : 1);
-      showHover(Math.max(0, Math.min(data.length - 1, i)));
-    });
-    if (hover >= 0 && hover < data.length) showHover(hover);
+    s += '<rect x="' + pad.l + '" y="0" width="' + (W - pad.l - pad.r + 8) + '" height="' + H + '" fill="transparent"/>';
+    el.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    el.innerHTML = s;
+    if (hover >= data.length) hover = -1;
+    showHover(hover);
   }
 
   function showHover(i) {
@@ -591,7 +609,7 @@
     const tip = $('tip');
     const cross = box.querySelector('#cross');
     const dot = box.querySelector('#hoverDot');
-    if (!tip || !chartGeom) return;
+    if (!tip || !cross || !chartGeom) return;
     if (i < 0) {
       tip.hidden = true;
       cross.style.display = 'none';
@@ -607,9 +625,13 @@
     dot.setAttribute('cx', x);
     dot.setAttribute('cy', sy(d.value));
     dot.style.display = '';
+    const value = document.createElement('strong');
+    value.textContent = fmt(d.value) + ' 块';
+    const when = document.createElement('span');
+    when.textContent = clock(d.hour);
+    tip.textContent = '';
+    tip.append(value, when);
     tip.hidden = false;
-    tip.querySelector('strong').textContent = fmt(d.value) + ' 块';
-    tip.querySelector('span').textContent = clock(d.hour);
     const px = (x / W) * box.clientWidth;
     const half = tip.offsetWidth / 2;
     tip.style.left = Math.max(half, Math.min(box.clientWidth - half, px)) + 'px';
@@ -715,7 +737,7 @@
   const LAB_DAYS = 365;
   let rules = {};
   const labCache = new Map(); // “种子|规矩” → 实验结果
-  const lab = { key: '', base: null, mine: null, job: null, hover: -1, geom: null };
+  const lab = { key: '', base: null, mine: null, job: null, hover: -1, geom: null, series: [] };
 
   function activeRules() {
     const on = {};
@@ -736,6 +758,8 @@
       input.addEventListener('change', () => {
         // 重开小镇会改变上面几块的高度；把页面挪回去，让刚点的这条规矩还在指针底下
         const before = input.getBoundingClientRect().top;
+        const run = document.querySelector('.lab-run');
+        run.style.minHeight = run.offsetHeight + 'px'; // 算完之前别让下面变矮，免得页面在底部时整体往下掉
         rules[r.key] = input.checked;
         start(seed);
         window.scrollBy(0, input.getBoundingClientRect().top - before);
@@ -806,6 +830,7 @@
   }
 
   function labDone() {
+    document.querySelector('.lab-run').style.minHeight = '';
     $('labMeter').hidden = true;
     $('labStatus').textContent = LAB_TOWNS + ' 座小镇，各模拟 ' + LAB_DAYS + ' 天';
     renderLab();
@@ -847,12 +872,31 @@
     $('labLegendNew').hidden = !lab.mine;
     const box = $('labChart');
     box.classList.toggle('stale', !!lab.job);
+    const el = chartShell(box, '一年里全镇欠账相对开局的变化，原来的规矩和勾选的规矩对比', 'labTip', {
+      pick: (clientX, svgEl) => {
+        const g = lab.geom;
+        if (!g) return;
+        const rect = svgEl.getBoundingClientRect();
+        const x = ((clientX - rect.left) / rect.width) * g.W;
+        const d = Math.round(((x - g.pad.l) / (g.W - g.pad.l - g.pad.r)) * (g.days - 1));
+        labHover(Math.max(0, Math.min(g.days - 1, d)));
+      },
+      hide: () => labHover(-1),
+      step: (dir, big) => {
+        const g = lab.geom;
+        if (!g) return;
+        const d = lab.hover < 0 ? g.days - 1 : lab.hover + dir * (big ? 30 : 1);
+        labHover(Math.max(0, Math.min(g.days - 1, d)));
+      },
+    });
     const series = [];
     if (lab.base) series.push({ id: 'base', name: '原来', r: lab.base });
     if (lab.mine) series.push({ id: 'new', name: '勾选', r: lab.mine });
+    lab.series = series;
     if (!series.length) {
-      box.textContent = '';
+      el.innerHTML = '';
       lab.geom = null;
+      labHover(-1);
       return;
     }
     const W = Math.max(280, Math.round(box.clientWidth || 600));
@@ -865,10 +909,9 @@
     const days = series[0].r.days;
     const sx = (d) => pad.l + (d / (days - 1)) * (W - pad.l - pad.r);
     const sy = (v) => pad.t + (1 - v / ymax) * (H - pad.t - pad.b);
-    lab.geom = { sx, sy, W, days };
+    lab.geom = { sx, sy, W, days, pad };
 
-    let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" tabindex="0" role="img" aria-label="一年里全镇欠账相对开局的变化，原来的规矩和勾选的规矩对比">';
-    s += '<g class="grid">';
+    let s = '<g class="grid">';
     for (let v = 0; v <= ymax + 1e-9; v += step) s += '<line x1="' + pad.l + '" x2="' + (W - pad.r) + '" y1="' + sy(v) + '" y2="' + sy(v) + '"/>';
     s += '</g><g class="axis">';
     for (let v = 0; v <= ymax + 1e-9; v += step) s += '<text x="' + (pad.l - 8) + '" y="' + (sy(v) + 4) + '" text-anchor="end">' + (v === 0 ? '0' : v + ' 倍') + '</text>';
@@ -888,48 +931,21 @@
     }
     s += '<text class="label" x="' + (pad.l + 6) + '" y="' + (sy(1) - 6) + '">开局</text>';
     s += '<line class="cross" id="labCross" y1="' + pad.t + '" y2="' + sy(0) + '" style="display:none"/>';
-    s += '</svg><div class="tip" id="labTip" hidden></div>';
-    const hadFocus = box.contains(document.activeElement);
-    rebuilding = true;
-    box.innerHTML = s;
-    rebuilding = false;
-
-    const svgEl = box.querySelector('svg');
-    if (hadFocus) svgEl.focus({ preventScroll: true });
-    const pick = (clientX) => {
-      const rect = svgEl.getBoundingClientRect();
-      const x = ((clientX - rect.left) / rect.width) * W;
-      const d = Math.round(((x - pad.l) / (W - pad.l - pad.r)) * (days - 1));
-      labHover(Math.max(0, Math.min(days - 1, d)), series);
-    };
-    svgEl.addEventListener('pointermove', (e) => pick(e.clientX));
-    svgEl.addEventListener('pointerdown', (e) => pick(e.clientX));
-    svgEl.addEventListener('pointerleave', (e) => {
-      if (e.pointerType !== 'touch') labHover(-1, series);
-    });
-    svgEl.addEventListener('blur', () => {
-      if (!rebuilding) labHover(-1, series);
-    });
-    svgEl.addEventListener('keydown', (e) => {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      e.preventDefault();
-      const stepDays = e.shiftKey ? 30 : 1;
-      const d = lab.hover < 0 ? days - 1 : lab.hover + (e.key === 'ArrowLeft' ? -stepDays : stepDays);
-      labHover(Math.max(0, Math.min(days - 1, d)), series);
-    });
-    if (lab.hover >= 0 && lab.hover < days) labHover(lab.hover, series);
+    el.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    el.innerHTML = s;
+    labHover(lab.hover < days ? lab.hover : -1);
     renderLabTable(series);
   }
 
-  function labHover(d, series) {
+  function labHover(d) {
     lab.hover = d;
     const box = $('labChart');
     const tip = $('labTip');
     const cross = $('labCross');
-    if (!tip || !lab.geom) return;
-    if (d < 0) {
+    if (!tip) return;
+    if (d < 0 || !lab.geom || !cross) {
       tip.hidden = true;
-      cross.style.display = 'none';
+      if (cross) cross.style.display = 'none';
       return;
     }
     const x = lab.geom.sx(d);
@@ -940,7 +956,7 @@
     const head = document.createElement('span');
     head.textContent = '第 ' + (d + 1) + ' 天';
     tip.append(head);
-    for (const sr of series) {
+    for (const sr of lab.series) {
       const row = document.createElement('div');
       row.className = 'row';
       const key = document.createElement('i');
@@ -1047,6 +1063,12 @@
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && selected >= 0) select(-1);
+    });
+    // 图表重画的那一刻指针刚好移出去，浏览器可能不发 pointerleave；鼠标挪到别处时补一下。
+    document.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch') return;
+      if (hover >= 0 && !$('chart').contains(e.target)) showHover(-1);
+      if (lab.hover >= 0 && !$('labChart').contains(e.target)) labHover(-1);
     });
     if (window.ResizeObserver) {
       let last = 0;

@@ -292,8 +292,9 @@ button, input { font: inherit; color: inherit; }
 }
 .tip strong { display: block; font-size: 15px; }
 .tip span { color: var(--ink-3); font-family: var(--font-mono); font-size: 12px; }
+details.table-view { min-width: 0; max-width: 100%; }
 details.table-view summary { cursor: pointer; color: var(--ink-2); font-size: 13px; width: fit-content; }
-.table-wrap { overflow-x: auto; margin-top: 8px; max-height: 240px; overflow-y: auto; }
+.table-wrap { overflow-x: auto; margin-top: 8px; max-height: 240px; overflow-y: auto; max-width: 100%; }
 .table-wrap table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 100%; }
 .table-wrap th, .table-wrap td { text-align: right; padding: 4px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
 .table-wrap th:first-child, .table-wrap td:first-child { text-align: left; }

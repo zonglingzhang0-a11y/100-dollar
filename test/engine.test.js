@@ -146,7 +146,8 @@ test('赊账有度：赊出去的账不会让人欠过上限', () => {
   const cap = Drift.RULE_PARAMS.creditCap.cap;
   let refused = 0;
   let checked = 0;
-  for (const seed of SEEDS) {
+  let overCap = 0;
+  for (const seed of SEEDS.concat(['b'])) {
     const sim = simFor(seed, { creditCap: true });
     for (let t = 0; t < MONTH * 3; t++) {
       const events = sim.step();
@@ -154,6 +155,10 @@ test('赊账有度：赊出去的账不会让人欠过上限', () => {
         if (ev.type === 'refused') {
           refused++;
           assert.ok(ev.paid === 0 || ev.paid === ev.price);
+          const text = Story.narrate(ev, sim).text;
+          if (ev.total > ev.cap) overCap++;
+          if (ev.total > ev.cap) assert.doesNotMatch(text, /这一笔就过/, text);
+          else assert.match(text, /这一笔就过/, text);
         }
         if (ev.type !== 'credit') continue;
         // 这个钟头里买主只出现在这一笔赊账里，才能拿收工后的账本核对
@@ -165,6 +170,7 @@ test('赊账有度：赊出去的账不会让人欠过上限', () => {
     }
   }
   assert.ok(refused > 0, '三个月里一次都没拒赊过');
+  assert.ok(overCap > 0, '没碰到本来就欠过上限的人');
   assert.ok(checked > 100);
 });
 

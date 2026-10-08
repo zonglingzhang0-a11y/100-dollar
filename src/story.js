@@ -104,9 +104,10 @@
         const buyer = resident(town, ev.from).name;
         const shop = resident(town, ev.to);
         let s = who(town, ev.from) + '想在' + shop.trade.shop + '赊账：' + ev.item + '（' + yuan(ev.price) + '）。';
+        const why = ev.total > ev.cap ? '，早就过了 ' + yuan(ev.cap) : '，再赊这一笔就过 ' + yuan(ev.cap) + '了';
         s += variant(ev, [
-          shop.name + '摇摇头：镇上谁都知道' + buyer + '已经欠了 ' + yuan(ev.total) + '，再赊这一笔就过 ' + yuan(ev.cap) + '了，不敢再赊。',
-          shop.name + '翻了翻账本：' + buyer + '前前后后欠了 ' + yuan(ev.total) + '，加上这一笔就过 ' + yuan(ev.cap) + '了，这回不能再赊。',
+          shop.name + '摇摇头：镇上谁都知道' + buyer + '已经欠了 ' + yuan(ev.total) + why + '，不敢再赊。',
+          shop.name + '翻了翻账本：' + buyer + '前前后后欠了 ' + yuan(ev.total) + why + '，这回不能再赊。',
         ]);
         return s + (ev.paid ? buyer + '只好数出 ' + yuan(ev.paid) + '零钱现买。' : buyer + '只好空着手回去。');
       }
