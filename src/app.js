@@ -8,6 +8,7 @@
 
   const { createSim, clock, DAY_START, DAY_END, BILL } = window.Drift;
   const Story = window.Story;
+  const Lab = window.Lab;
   const NS = 'http://www.w3.org/2000/svg';
   const SPEEDS = { slow: 900, mid: 320, fast: 70 }; // 每个白天钟点的毫秒数；夜里快五倍
   const JOURNAL_LIMIT = 400;
@@ -629,13 +630,278 @@
     schedule();
   }
 
+  // ---------- 镇上的规矩 + 长期实验 ----------
+
+  // 每条规矩在页面上的说法；key 对应引擎 createSim(seed, { rules }) 里的开关。
+  const RULE_COPY = [];
+  const LAB_TOWNS = 40;
+  const LAB_DAYS = 365;
+  let rules = {};
+  const labCache = new Map(); // “种子|规矩” → 实验结果
+  const lab = { key: '', base: null, mine: null, job: null, hover: -1, geom: null };
+
+  function activeRules() {
+    const on = {};
+    for (const r of RULE_COPY) if (rules[r.key]) on[r.key] = true;
+    return Object.keys(on).length ? on : null;
+  }
+
+  function buildRules() {
+    const box = $('rules');
+    box.querySelectorAll('.rule').forEach((n) => n.remove());
+    for (const r of RULE_COPY) {
+      const label = document.createElement('label');
+      label.className = 'rule';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = 'rule-' + r.key;
+      input.checked = !!rules[r.key];
+      input.addEventListener('change', () => {
+        rules[r.key] = input.checked;
+        start(seed);
+      });
+      const name = document.createElement('strong');
+      name.textContent = r.title;
+      const desc = document.createElement('span');
+      desc.textContent = r.desc;
+      label.append(input, name, desc);
+      box.append(label);
+    }
+  }
+
+  function labKey(rs) {
+    return seed + '|' + JSON.stringify(rs);
+  }
+
+  // 原来的规矩和勾选的规矩各跑 40 座小镇一年；一小片一小片地跑，别卡住页面。
+  function runLab() {
+    const mine = activeRules();
+    const key = labKey(mine);
+    if (lab.key === key) return;
+    if (lab.job) clearTimeout(lab.job.timer);
+    lab.key = key;
+    lab.base = labCache.get(labKey(null)) || null;
+    lab.mine = mine ? labCache.get(key) || null : null;
+    const runs = [];
+    if (!lab.base) runs.push({ rules: null, run: Lab.createRun({ seed, towns: LAB_TOWNS, days: LAB_DAYS }) });
+    if (mine && !lab.mine) runs.push({ rules: mine, run: Lab.createRun({ seed, towns: LAB_TOWNS, days: LAB_DAYS, rules: mine }) });
+    if (!runs.length) {
+      lab.job = null;
+      labDone();
+      return;
+    }
+    const job = { timer: 0 };
+    lab.job = job;
+    const total = runs.length * LAB_TOWNS;
+    $('labMeter').hidden = false;
+    renderLab();
+    const slice = () => {
+      if (lab.job !== job) return;
+      const t0 = performance.now();
+      let current = runs.find((r) => !r.run.done);
+      while (current && performance.now() - t0 < 12) {
+        current.run.next();
+        if (current.run.done) current = runs.find((r) => !r.run.done);
+      }
+      let finished = 0;
+      for (const r of runs) finished += Math.round(r.run.progress * r.run.towns);
+      $('labMeter').firstElementChild.style.width = ((100 * finished) / total).toFixed(1) + '%';
+      $('labStatus').textContent = '正在模拟第 ' + Math.min(total, finished + 1) + ' / ' + total + ' 座小镇……';
+      if (current) {
+        job.timer = setTimeout(slice, 0);
+        return;
+      }
+      for (const r of runs) {
+        const result = r.run.result();
+        labCache.set(labKey(r.rules), result);
+        if (r.rules) lab.mine = result;
+        else lab.base = result;
+      }
+      lab.job = null;
+      labDone();
+    };
+    job.timer = setTimeout(slice, 60);
+  }
+
+  function labDone() {
+    $('labMeter').hidden = true;
+    $('labStatus').textContent = LAB_TOWNS + ' 座小镇，各模拟 ' + LAB_DAYS + ' 天';
+    renderLab();
+  }
+
+  const times = (v) => v.toFixed(2) + ' 倍';
+
+  function trendText(r) {
+    const quarter = r.drift * 90;
+    if (Math.abs(quarter) < 0.05) return '最后三个月基本走平';
+    return quarter > 0 ? '最后三个月还在往上涨' : '最后三个月还在往下走';
+  }
+
+  function renderVerdict() {
+    const p = $('labVerdict');
+    p.textContent = '';
+    const b = lab.base;
+    const m = lab.mine;
+    if (!b) {
+      p.textContent = '正在算……';
+      return;
+    }
+    const strong = (t) => {
+      const el = document.createElement('strong');
+      el.textContent = t;
+      return el;
+    };
+    if (m) {
+      p.append('加上勾选的规矩，一年后欠账的中位数是开局的 ', strong(times(m.final)), '，' + trendText(m) + '；原来的规矩下是 ', strong(times(b.final)), '，' + trendText(b) + '。');
+    } else {
+      p.append('照原来的规矩，一年后欠账的中位数是开局的 ', strong(times(b.final)), '，' + trendText(b) + '。最低点在第 ' + b.lowDay + ' 天，只有开局的 ' + times(b.low) + '。');
+    }
+  }
+
+  function renderLab() {
+    renderVerdict();
+    $('labLegendNew').hidden = !lab.mine;
+    const box = $('labChart');
+    box.classList.toggle('stale', !!lab.job);
+    const series = [];
+    if (lab.base) series.push({ id: 'base', name: '原来', r: lab.base });
+    if (lab.mine) series.push({ id: 'new', name: '勾选', r: lab.mine });
+    if (!series.length) {
+      box.textContent = '';
+      lab.geom = null;
+      return;
+    }
+    const W = Math.max(280, Math.round(box.clientWidth || 600));
+    const H = 230;
+    const pad = { l: 50, r: 18, t: 14, b: 26 };
+    let top = 1.2;
+    for (const sr of series) for (const v of sr.r.p90) top = Math.max(top, v);
+    const step = top <= 2 ? 0.5 : top <= 4 ? 1 : 2;
+    const ymax = Math.ceil(top / step) * step;
+    const days = series[0].r.days;
+    const sx = (d) => pad.l + (d / (days - 1)) * (W - pad.l - pad.r);
+    const sy = (v) => pad.t + (1 - v / ymax) * (H - pad.t - pad.b);
+    lab.geom = { sx, sy, W, days };
+
+    let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" tabindex="0" role="img" aria-label="一年里全镇欠账相对开局的变化，原来的规矩和勾选的规矩对比">';
+    s += '<g class="grid">';
+    for (let v = 0; v <= ymax + 1e-9; v += step) s += '<line x1="' + pad.l + '" x2="' + (W - pad.r) + '" y1="' + sy(v) + '" y2="' + sy(v) + '"/>';
+    s += '</g><g class="axis">';
+    for (let v = 0; v <= ymax + 1e-9; v += step) s += '<text x="' + (pad.l - 8) + '" y="' + (sy(v) + 4) + '" text-anchor="end">' + (v === 0 ? '0' : v + ' 倍') + '</text>';
+    const marks = W < 520 ? [1, 180, 365] : [1, 90, 180, 270, 365];
+    for (const d of marks) s += '<text x="' + sx(d - 1) + '" y="' + (H - 6) + '" text-anchor="' + (d === 1 ? 'start' : d === 365 ? 'end' : 'middle') + '">第' + d + '天</text>';
+    s += '</g>';
+    s += '<line class="one" x1="' + pad.l + '" x2="' + (W - pad.r) + '" y1="' + sy(1) + '" y2="' + sy(1) + '"/>';
+    const path = (arr) => arr.map((v, d) => (d ? 'L' : 'M') + sx(d).toFixed(1) + ',' + sy(v).toFixed(1)).join('');
+    for (const sr of series) {
+      const upper = path(sr.r.p90);
+      const lower = sr.r.p10.map((v, d) => 'L' + sx(d).toFixed(1) + ',' + sy(v).toFixed(1)).reverse().join('');
+      s += '<path class="' + sr.id + '-band" d="' + upper + lower + 'Z"/>';
+    }
+    for (const sr of series) {
+      s += '<path class="' + sr.id + '-line" d="' + path(sr.r.median) + '"/>';
+      s += '<circle class="' + sr.id + '-dot" cx="' + sx(days - 1) + '" cy="' + sy(sr.r.final) + '" r="4.5"/>';
+    }
+    s += '<text class="label" x="' + (pad.l + 6) + '" y="' + (sy(1) - 6) + '">开局</text>';
+    s += '<line class="cross" id="labCross" y1="' + pad.t + '" y2="' + sy(0) + '" style="display:none"/>';
+    s += '</svg><div class="tip" id="labTip" hidden></div>';
+    box.innerHTML = s;
+
+    const svgEl = box.querySelector('svg');
+    const pick = (clientX) => {
+      const rect = svgEl.getBoundingClientRect();
+      const x = ((clientX - rect.left) / rect.width) * W;
+      const d = Math.round(((x - pad.l) / (W - pad.l - pad.r)) * (days - 1));
+      labHover(Math.max(0, Math.min(days - 1, d)), series);
+    };
+    svgEl.addEventListener('pointermove', (e) => pick(e.clientX));
+    svgEl.addEventListener('pointerdown', (e) => pick(e.clientX));
+    svgEl.addEventListener('pointerleave', () => labHover(-1, series));
+    svgEl.addEventListener('blur', () => labHover(-1, series));
+    svgEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const stepDays = e.shiftKey ? 30 : 1;
+      const d = lab.hover < 0 ? days - 1 : lab.hover + (e.key === 'ArrowLeft' ? -stepDays : stepDays);
+      labHover(Math.max(0, Math.min(days - 1, d)), series);
+    });
+    if (lab.hover >= 0 && lab.hover < days) labHover(lab.hover, series);
+    renderLabTable(series);
+  }
+
+  function labHover(d, series) {
+    lab.hover = d;
+    const box = $('labChart');
+    const tip = $('labTip');
+    const cross = $('labCross');
+    if (!tip || !lab.geom) return;
+    if (d < 0) {
+      tip.hidden = true;
+      cross.style.display = 'none';
+      return;
+    }
+    const x = lab.geom.sx(d);
+    cross.setAttribute('x1', x);
+    cross.setAttribute('x2', x);
+    cross.style.display = '';
+    tip.textContent = '';
+    const head = document.createElement('span');
+    head.textContent = '第 ' + (d + 1) + ' 天';
+    tip.append(head);
+    for (const sr of series) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const key = document.createElement('i');
+      key.style.background = sr.id === 'base' ? 'var(--debt)' : 'var(--note)';
+      const v = document.createElement('b');
+      v.textContent = times(sr.r.median[d]);
+      const range = document.createElement('span');
+      range.textContent = sr.name + '　' + sr.r.p10[d].toFixed(2) + '–' + sr.r.p90[d].toFixed(2);
+      row.append(key, v, range);
+      tip.append(row);
+    }
+    tip.hidden = false;
+    const px = (x / lab.geom.W) * box.clientWidth;
+    const half = tip.offsetWidth / 2;
+    tip.style.left = Math.max(half, Math.min(box.clientWidth - half, px)) + 'px';
+  }
+
+  function renderLabTable(series) {
+    const head = $('labHead');
+    const body = $('labRows');
+    head.textContent = '';
+    body.textContent = '';
+    const hr = document.createElement('tr');
+    for (const t of ['日子'].concat(series.map((sr) => sr.name + '（中位数）'), series.map((sr) => sr.name + '（中间 80%）'))) {
+      const th = document.createElement('th');
+      th.textContent = t;
+      hr.append(th);
+    }
+    head.append(hr);
+    const days = series[0].r.days;
+    for (let d = 30; d <= days; d += 30) rowFor(d - 1);
+    if (days % 30) rowFor(days - 1);
+    function rowFor(i) {
+      const tr = document.createElement('tr');
+      const cells = ['第 ' + (i + 1) + ' 天']
+        .concat(series.map((sr) => times(sr.r.median[i])))
+        .concat(series.map((sr) => sr.r.p10[i].toFixed(2) + '–' + sr.r.p90[i].toFixed(2)));
+      for (const c of cells) {
+        const td = document.createElement('td');
+        td.textContent = c;
+        tr.append(td);
+      }
+      body.append(tr);
+    }
+  }
+
   // ---------- 启动 ----------
 
   function start(newSeed, targetHour) {
     clearTimeout(timer);
     if (flight) flight.finish();
     seed = newSeed;
-    sim = createSim(seed);
+    sim = createSim(seed, activeRules() ? { rules: activeRules() } : undefined);
     selected = -1;
     hover = -1;
     $('seed').value = seed;
@@ -658,6 +924,7 @@
     addEntries(events.slice(-JOURNAL_LIMIT * 2), false);
     renderAll();
     schedule();
+    runLab();
   }
 
   function wire() {
@@ -680,6 +947,7 @@
     $('shuffle').addEventListener('click', () => start(randomSeed()));
     $('townLife').addEventListener('change', (e) => $('journal').classList.toggle('no-town', !e.target.checked));
     $('tableView').addEventListener('toggle', renderTable);
+    buildRules();
     $('map').addEventListener('click', () => {
       if (selected >= 0) select(-1);
     });
@@ -695,14 +963,23 @@
           renderChart();
         }
       }).observe($('chart'));
+      let labWidth = 0;
+      new ResizeObserver((entries) => {
+        const w = Math.round(entries[0].contentRect.width);
+        if (w !== labWidth && lab.base) {
+          labWidth = w;
+          renderLab();
+        }
+      }).observe($('labChart'));
     }
     if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
-      window.claude.hot.snapshot(() => ({ seed, hour: sim ? sim.state.hour : 0, playing, speed }));
+      window.claude.hot.snapshot(() => ({ seed, hour: sim ? sim.state.hour : 0, playing, speed, rules }));
     }
   }
 
   function boot(data) {
     data = data || {};
+    if (data.rules && typeof data.rules === 'object') rules = Object.assign({}, data.rules);
     wire();
     if (data.speed && SPEEDS[data.speed]) {
       speed = data.speed;
