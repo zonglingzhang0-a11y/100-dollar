@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>百元漂流记</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;600&family=ZCOOL+XiaoWei&display=swap">
+<style>
+/* 版式：一张钞票压在小镇地图上。地图是主场，钞票档案和流水账像存折一样贴在右边。 */
+:root {
+  --paper: #edf1ec;      /* 页面底色：偏冷的钞纸 */
+  --sheet: #f8faf6;      /* 地图和卡片 */
+  --ink: #17231d;
+  --ink-2: #485850;
+  --ink-3: #5f6e66;
+  --rule: #d2dbd3;
+  --street: #e2e8e2;
+  --note: #00866e;       /* 钞票：轨迹、小钞票 */
+  --accent: #006b55;     /* 按钮、焦点 */
+  --on-accent: #f8faf6;
+  --debt: #c8452a;       /* 欠账 */
+  --gold: #85651a;       /* 钞票上的痕迹 */
+  --dusk: rgba(20, 34, 28, 0.08);
+  --guilloche: rgba(0, 134, 110, 0.10);
+  --font-display: "ZCOOL XiaoWei", "STKaiti", "KaiTi", serif;
+  --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-story: "Noto Serif SC", "Songti SC", "SimSun", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1411; --sheet: #141d19; --ink: #e2eae4; --ink-2: #a9b6ae; --ink-3: #8b998f;
+    --rule: #27342e; --street: #1b2621; --note: #24a688; --accent: #4cc3a2; --on-accent: #0d1411;
+    --debt: #e4694c; --gold: #d4b467; --dusk: rgba(0, 0, 0, 0.32); --guilloche: rgba(36, 166, 136, 0.12);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1411; --sheet: #141d19; --ink: #e2eae4; --ink-2: #a9b6ae; --ink-3: #8b998f;
+  --rule: #27342e; --street: #1b2621; --note: #24a688; --accent: #4cc3a2; --on-accent: #0d1411;
+  --debt: #e4694c; --gold: #d4b467; --dusk: rgba(0, 0, 0, 0.32); --guilloche: rgba(36, 166, 136, 0.12);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.6 var(--font-body);
+}
+.page {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding-inline: 20px;
+  padding-block: 20px 40px;
+  display: grid;
+  gap: 18px;
+}
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- 顶栏 ---------- */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px 24px;
+}
+.brand { min-width: 0; }
+.brand h1 {
+  margin: 0;
+  font: 400 clamp(32px, 5vw, 44px)/1.1 var(--font-display);
+  letter-spacing: 0.04em;
+  text-wrap: balance;
+}
+.brand p { margin: 4px 0 0; color: var(--ink-2); }
+.brand .town { color: var(--ink); font-weight: 600; }
+
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 36px; padding: 0 14px;
+  border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--sheet); cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--ink-3); }
+.btn svg { width: 14px; height: 14px; fill: currentColor; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); min-width: 88px; justify-content: center; }
+.btn.primary:hover { filter: brightness(1.08); }
+
+.speed { display: inline-flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--sheet); }
+.speed input { position: absolute; opacity: 0; pointer-events: none; }
+.speed label { padding: 0 12px; height: 34px; display: inline-flex; align-items: center; cursor: pointer; color: var(--ink-2); }
+.speed input:checked + label { background: var(--ink); color: var(--sheet); }
+.speed input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.seed { display: inline-flex; align-items: center; gap: 6px; }
+.seed label { color: var(--ink-3); font-size: 13px; }
+.seed input {
+  width: 8.5em; height: 36px; padding: 0 10px;
+  border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--sheet); font-family: var(--font-mono); font-size: 14px;
+}
+
+/* ---------- 主体网格 ---------- */
+.layout {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+  grid-template-areas:
+    "map  note"
+    "map  log"
+    "nums log";
+  grid-template-rows: auto 1fr auto;
+}
+.map-card { grid-area: map; }
+.note-card { grid-area: note; }
+.log-card { grid-area: log; }
+.nums { grid-area: nums; }
+.card { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; min-width: 0; }
+.eyebrow { font-size: 12px; letter-spacing: 0.12em; color: var(--ink-3); margin: 0; }
+
+/* ---------- 地图 ---------- */
+.map-card { position: relative; padding: 10px; display: grid; gap: 8px; align-content: start; }
+.map-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 6px 0; flex-wrap: wrap; }
+.clock { font: 500 15px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.clock .phase { font-family: var(--font-body); font-size: 13px; color: var(--ink-3); margin-left: 8px; }
+.map-scroll { min-width: 0; border-radius: 4px; }
+#map { display: block; width: 100%; height: auto; border-radius: 4px; touch-action: pan-x pan-y; }
+.swipe { display: none; }
+#map .ground { fill: var(--sheet); }
+#map .street { fill: var(--street); }
+#map .street-name { fill: var(--ink-3); font-size: 13px; letter-spacing: 0.3em; }
+#map .dusk { fill: var(--dusk); opacity: 0; transition: opacity 0.8s ease; }
+.map-card.night #map .dusk { opacity: 1; }
+#map .edge { fill: none; stroke: var(--debt); opacity: 0.3; stroke-linecap: round; transition: opacity 0.25s, stroke-width 0.4s; }
+#map .edge.hot { opacity: 0.9; }
+#map.focused .edge:not(.hot) { opacity: 0.08; }
+#map .arrowhead { fill: var(--debt); }
+#map .trail path { fill: none; stroke: var(--note); stroke-width: 2; stroke-linecap: round; }
+#map .house { cursor: pointer; }
+#map .house .halo { fill: none; stroke: var(--note); stroke-width: 2; opacity: 0; }
+#map .house .lot { fill: var(--sheet); stroke: var(--ink-2); stroke-width: 1.5; }
+#map .house .sign { fill: var(--ink); font: 24px var(--font-display); text-anchor: middle; }
+#map .house .name { fill: var(--ink-2); font-size: 13px; text-anchor: middle; }
+#map .house:hover .lot, #map .house:focus-visible .lot { stroke: var(--ink); stroke-width: 2.5; }
+#map .house:focus { outline: none; }
+#map .house:focus-visible .halo { opacity: 1; stroke: var(--accent); stroke-dasharray: 3 4; }
+#map .house.holder .lot { stroke: var(--note); stroke-width: 3; }
+#map .house.holder .halo { opacity: 0.55; animation: pulse 2.4s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+#map .house.selected .lot { fill: var(--street); stroke: var(--ink); stroke-width: 2.5; }
+#map .bill rect { fill: var(--note); stroke: var(--sheet); stroke-width: 2; }
+#map .bill text { fill: var(--sheet); font: 500 10px var(--font-mono); text-anchor: middle; }
+@keyframes pulse { 0%, 100% { transform: scale(0.92); } 50% { transform: scale(1.1); } }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0 6px 4px; font-size: 13px; color: var(--ink-2); list-style: none; }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.key { width: 22px; height: 10px; flex: none; }
+.key line { stroke-width: 2; stroke-linecap: round; }
+.key .k-note { stroke: var(--note); }
+.key .k-debt { stroke: var(--debt); }
+.key path { fill: var(--debt); }
+
+/* 镇民档案：桌面上浮在地图右上角，手机上排在地图下面 */
+.person {
+  position: absolute; top: 52px; right: 20px; width: min(300px, calc(100% - 40px));
+  background: var(--sheet); border: 1px solid var(--ink-3); border-radius: 8px;
+  padding: 14px 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  display: grid; gap: 10px;
+}
+.person-head { display: flex; gap: 12px; align-items: center; }
+.person-sign {
+  width: 46px; height: 46px; flex: none; display: grid; place-items: center;
+  border: 1.5px solid var(--ink-2); border-radius: 5px; font: 26px var(--font-display);
+}
+.person-head h2 { margin: 0; font-size: 17px; line-height: 1.3; }
+.person-head p { margin: 0; color: var(--ink-2); font-size: 13px; }
+.person-close { margin-left: auto; align-self: flex-start; border: 0; background: none; cursor: pointer; padding: 4px 6px; color: var(--ink-3); font-size: 18px; line-height: 1; border-radius: 4px; }
+.person dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; }
+.person dt { color: var(--ink-3); }
+.person dd { margin: 0; font-variant-numeric: tabular-nums; }
+.person h3 { margin: 0 0 4px; font-size: 13px; font-weight: 400; color: var(--ink-3); }
+.person ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 14px; }
+.person li { display: flex; justify-content: space-between; gap: 12px; }
+.person li span:last-child { font-variant-numeric: tabular-nums; }
+.person .owes span:last-child { color: var(--debt); }
+.person .none { color: var(--ink-3); }
+
+/* ---------- 钞票档案 ---------- */
+.note-card { padding: 14px; display: grid; gap: 12px; align-content: start; }
+.banknote {
+  position: relative; aspect-ratio: 2.35 / 1; max-width: 100%;
+  border-radius: 6px; padding: 10px 14px;
+  border: 1px solid var(--note);
+  outline: 3px double var(--note); outline-offset: -8px;
+  background:
+    repeating-radial-gradient(circle at 78% 50%, transparent 0 5px, var(--guilloche) 5px 6px),
+    repeating-linear-gradient(115deg, transparent 0 9px, var(--guilloche) 9px 10px),
+    var(--sheet);
+  display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+}
+.banknote .denom { font: 400 34px/1 var(--font-display); color: var(--note); padding: 6px 0 0 4px; }
+.banknote .serial { font: 500 13px/1 var(--font-mono); color: var(--debt); letter-spacing: 0.08em; padding: 10px 4px 0 0; text-align: right; }
+.banknote .face { grid-column: 1 / -1; align-self: center; text-align: center; font: 400 clamp(26px, 3vw, 34px)/1 var(--font-display); letter-spacing: 0.3em; color: var(--ink); }
+.banknote .wear { grid-column: 1 / -1; display: flex; justify-content: space-between; font: 12px/1 var(--font-mono); color: var(--ink-2); padding: 0 4px 6px; }
+.where { margin: 0; font-size: 15px; }
+.where strong { font-weight: 600; }
+.facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.facts div { min-width: 0; }
+.facts dt { font-size: 12px; color: var(--ink-3); }
+.facts dd { margin: 0; font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.marks h2 { margin: 0 0 6px; font-size: 13px; font-weight: 400; color: var(--ink-3); }
+.marks ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font: 14px/1.55 var(--font-story); }
+.marks li { display: grid; grid-template-columns: 0.9em 1fr; gap: 6px; }
+.marks li::before { content: "◆"; color: var(--gold); font-size: 9px; padding-top: 0.5em; }
+.marks .empty { color: var(--ink-3); grid-template-columns: 1fr; }
+.marks .empty::before { content: none; }
+
+/* ---------- 流水账 ---------- */
+.log-card { display: grid; grid-template-rows: auto 1fr; min-height: 360px; }
+.log-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px 8px; border-bottom: 1px solid var(--rule); }
+.log-head h2 { margin: 0; font: 400 20px/1.2 var(--font-display); letter-spacing: 0.06em; }
+.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.toggle input { accent-color: var(--accent); }
+.log-body { position: relative; min-height: 0; }
+.journal {
+  position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain;
+  margin: 0; padding: 6px 14px 14px; list-style: none;
+  font: 15px/1.75 var(--font-story);
+}
+.journal li { padding: 6px 0; }
+.journal .entry { display: grid; grid-template-columns: 3.4em minmax(0, 1fr); gap: 8px; }
+.journal time { font: 12px/2.2 var(--font-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.journal p { margin: 0; }
+.journal .muted { color: var(--ink-3); font-size: 13.5px; padding: 2px 0; }
+.journal .mark p { color: var(--gold); }
+.journal .day {
+  display: flex; align-items: center; gap: 10px; padding: 14px 0 4px;
+  font: 13px/1 var(--font-body); color: var(--ink-3); letter-spacing: 0.2em;
+}
+.journal .day::before, .journal .day::after { content: ""; flex: 1; border-top: 1px solid var(--rule); }
+.journal .fresh p { animation: ink 1.2s ease-out; }
+.journal.no-town .muted { display: none; }
+@keyframes ink { from { background: var(--guilloche); } to { background: transparent; } }
+
+/* ---------- 账目数字 ---------- */
+.nums { padding: 16px 18px; display: grid; gap: 16px; }
+.nums-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 16px; }
+.nums-head h2 { margin: 0; font: 400 20px/1.2 var(--font-display); letter-spacing: 0.06em; }
+.nums-head p { margin: 0; color: var(--ink-2); font-size: 14px; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.tile { min-width: 0; border-left: 1px solid var(--rule); padding-left: 12px; }
+.tile:first-child { border-left: 0; padding-left: 0; }
+.tile dt { font-size: 13px; color: var(--ink-3); }
+.tile dd { margin: 0; font-size: 24px; font-weight: 600; line-height: 1.3; }
+.tile dd small { display: block; font-size: 12px; font-weight: 400; color: var(--ink-2); }
+.chart-block { display: grid; gap: 6px; }
+.chart-title { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.chart-title span:last-child { color: var(--ink-3); font-size: 13px; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: 190px; }
+.chart svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chart .grid line { stroke: var(--rule); stroke-width: 1; }
+.chart .axis text { fill: var(--ink-3); font: 11px var(--font-mono); font-variant-numeric: tabular-nums; }
+.chart .area { fill: var(--debt); opacity: 0.1; }
+.chart .line { fill: none; stroke: var(--debt); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .dot { fill: var(--debt); stroke: var(--sheet); stroke-width: 2; }
+.chart .label { fill: var(--ink-2); font: 12px var(--font-body); }
+.chart .cross { stroke: var(--ink-3); stroke-width: 1; }
+.tip {
+  position: absolute; top: 0; pointer-events: none; transform: translateX(-50%);
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 10px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1); white-space: nowrap; font-size: 13px; line-height: 1.4;
+}
+.tip strong { display: block; font-size: 15px; }
+.tip span { color: var(--ink-3); font-family: var(--font-mono); font-size: 12px; }
+details.table-view summary { cursor: pointer; color: var(--ink-2); font-size: 13px; width: fit-content; }
+.table-wrap { overflow-x: auto; margin-top: 8px; max-height: 240px; overflow-y: auto; }
+.table-wrap table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 100%; }
+.table-wrap th, .table-wrap td { text-align: right; padding: 4px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.table-wrap th:first-child, .table-wrap td:first-child { text-align: left; }
+.table-wrap th { font-weight: 400; color: var(--ink-3); position: sticky; top: 0; background: var(--sheet); }
+
+.foot { color: var(--ink-3); font-size: 13px; margin: 0; max-width: 70ch; }
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 980px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "map" "note" "log" "nums";
+    grid-template-rows: none;
+  }
+  .person { position: static; width: auto; box-shadow: none; }
+  .log-body { height: min(62vh, 520px); }
+}
+@media (max-width: 560px) {
+  .page { padding-inline: 16px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
+  .tile:nth-child(3) { border-left: 0; padding-left: 0; }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .controls { width: 100%; }
+  .seed { flex: 1 1 100%; }
+  .seed input { flex: 1; min-width: 0; }
+  .map-card { padding: 6px; }
+  .map-scroll { overflow-x: auto; overscroll-behavior-x: contain; }
+  #map { width: 820px; max-width: none; }
+  #map .house .name { font-size: 15px; }
+  .swipe { display: inline; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #map .house.holder .halo { animation: none; }
+  .journal .fresh p { animation: none; }
+  #map .dusk, #map .edge { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div class="brand">
+      <h1>百元漂流记</h1>
+      <p>一张百元钞在<span class="town" id="townName">小镇</span>的转手记录：它替谁还了账，又让谁打了欠条。</p>
+    </div>
+    <div class="controls">
+      <button class="btn primary" id="play" type="button" aria-pressed="false">
+        <svg id="playIcon" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z"/></svg>
+        <span id="playLabel">播放</span>
+      </button>
+      <button class="btn" id="next" type="button">下一次转手</button>
+      <div class="speed" role="radiogroup" aria-label="速度">
+        <input type="radio" name="speed" id="speed-slow" value="slow"><label for="speed-slow">慢</label>
+        <input type="radio" name="speed" id="speed-mid" value="mid" checked><label for="speed-mid">中</label>
+        <input type="radio" name="speed" id="speed-fast" value="fast"><label for="speed-fast">快</label>
+      </div>
+      <form class="seed" id="seedForm" autocomplete="off">
+        <label for="seed">种子</label>
+        <input id="seed" name="seed" maxlength="32" spellcheck="false">
+        <button class="btn" type="submit">种下</button>
+        <button class="btn" type="button" id="shuffle">换个小镇</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="card map-card" id="mapCard" aria-label="小镇地图">
+      <div class="map-head">
+        <div class="clock" id="clock" aria-live="off">第 1 天 07:00</div>
+        <p class="eyebrow">点一户人家，看看谁欠谁<span class="swipe">；地图可左右滑动</span></p>
+      </div>
+      <div class="map-scroll" id="mapScroll"><svg id="map" viewBox="0 0 1000 620" role="group" aria-label="小镇地图：房子是镇民，红色箭头是欠账"></svg></div>
+      <ul class="legend">
+        <li><svg class="key" viewBox="0 0 22 10" aria-hidden="true"><line class="k-note" x1="1" y1="5" x2="21" y2="5"/></svg>钞票最近走过的路</li>
+        <li><svg class="key" viewBox="0 0 22 10" aria-hidden="true"><line class="k-debt" x1="1" y1="5" x2="15" y2="5"/><path d="M14 1.5 21 5 14 8.5z"/></svg>谁欠谁，越粗欠得越多</li>
+      </ul>
+      <aside class="person" id="person" hidden aria-live="polite"></aside>
+    </section>
+
+    <section class="card note-card" aria-label="钞票档案">
+      <div class="banknote" aria-hidden="true">
+        <div class="denom">100</div>
+        <div class="serial" id="serial">—</div>
+        <div class="face">壹佰</div>
+        <div class="wear"><span>ONE HUNDRED</span><span id="grade">全新</span></div>
+      </div>
+      <p class="where" id="where">钞票还在外乡人的兜里。</p>
+      <dl class="facts">
+        <div><dt>经手</dt><dd id="hands">0 次</dd></div>
+        <div><dt>品相</dt><dd id="condition">100%</dd></div>
+        <div><dt>停留最久</dt><dd id="longest">—</dd></div>
+      </dl>
+      <div class="marks">
+        <h2>票面上的痕迹</h2>
+        <ol id="marks"><li class="empty">还很新，没留下什么痕迹。</li></ol>
+      </div>
+    </section>
+
+    <section class="card log-card" aria-label="流水账">
+      <div class="log-head">
+        <h2>流水账</h2>
+        <label class="toggle"><input type="checkbox" id="townLife" checked>镇上的其他账</label>
+      </div>
+      <div class="log-body"><ol class="journal" id="journal"></ol></div>
+    </section>
+
+    <section class="card nums" aria-label="账目">
+      <div class="nums-head">
+        <h2>这张钞票做了什么</h2>
+        <p id="punchline">外乡人还没进镇。</p>
+      </div>
+      <dl class="tiles">
+        <div class="tile"><dt>替人还掉的旧账</dt><dd id="repaid">0 块<small>&nbsp;</small></dd></div>
+        <div class="tile"><dt>经它成交的买卖</dt><dd id="commerce">0 块<small>&nbsp;</small></dd></div>
+        <div class="tile"><dt>因为找不开打的欠条</dt><dd id="ious">0 块<small>&nbsp;</small></dd></div>
+        <div class="tile"><dt>摸过它的人</dt><dd id="holders">0 位<small>&nbsp;</small></dd></div>
+      </dl>
+      <div class="chart-block">
+        <div class="chart-title"><span>全镇欠账总额（块）</span><span>指针或方向键查看每个钟点</span></div>
+        <div class="chart" id="chart"></div>
+        <details class="table-view" id="tableView">
+          <summary>按天看数字</summary>
+          <div class="table-wrap"><table><thead><tr><th>日子</th><th>当晚全镇欠账</th><th>钞票转手</th></tr></thead><tbody id="dayRows"></tbody></table></div>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <p class="foot">镇子、人名和账目都由种子生成：同一个种子永远是同一段故事。钞票只在白天（7:00–21:00）转手；持有人先还欠得最多、又找得开零钱的那笔账，没账可还时才会去买东西。</p>
+</div>
+<script src="src/engine.js"></script>
+<script src="src/story.js"></script>
+<script src="src/app.js"></script>
+</body>
+</html>
