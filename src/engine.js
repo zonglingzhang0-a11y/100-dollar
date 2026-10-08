@@ -223,11 +223,44 @@
     };
   }
 
+  // ---------- 镇上的规矩 ----------
+  //
+  // createSim(seed, { rules: { creditCap: true, ... } }) 打开对应的规矩；不传 rules（或全关）时，
+  // 一切和原版一字不差：同一个种子，同样的事件，连随机数都不多抽一次。
+  const RULE_PARAMS = {
+    // 赊账有度：一个人欠全镇的账加起来超过这个数，谁家都不肯再赊；兜里零钱够的，可以当场现买。
+    creditCap: { cap: 200 },
+    // 照顾生意：手头宽裕的人（别人欠自己的不比自己欠别人的少）常拿闲钱出门买东西，
+    // 一半时候特意去欠债人家照顾生意；对方欠着自己的，先拿货抵账；收了现钱的人转手先还账。
+    patronage: { rate: 0.6, reserve: 20, reserveThrift: 60, needyShare: 0.5 },
+    // 以工抵债：欠了 200 块以上、手头不到 30 块、又一个礼拜没摸到钞票的人，
+    // 每天早上有三成可能去最大的债主那里帮一天工，30 块工钱抵账。
+    workoff: { threshold: 200, idleDays: 7, wage: 30, chance: 0.3, hour: 8 },
+    // 三角债清理：逢七的集日，商会账房把绕成圈的欠账按圈上最小的一笔对冲掉。
+    netting: { every: 7, hour: 12 },
+    // 第二位外乡人：第 2 天早上又来一位外乡人，也付一张百元钞住一晚。
+    secondTraveler: { bills: 2 },
+  };
+  const RULE_KEYS = Object.keys(RULE_PARAMS);
+
+  function readRules(opts) {
+    const r = (opts && opts.rules) || {};
+    const bills = r.bills ? Math.max(1, Math.min(16, Math.floor(r.bills))) : r.secondTraveler ? RULE_PARAMS.secondTraveler.bills : 1;
+    return {
+      creditCap: r.creditCap ? RULE_PARAMS.creditCap : null,
+      patronage: r.patronage ? RULE_PARAMS.patronage : null,
+      workoff: r.workoff ? RULE_PARAMS.workoff : null,
+      netting: r.netting ? RULE_PARAMS.netting : null,
+      bills,
+    };
+  }
+
   // ---------- 模拟 ----------
 
   function createSim(seed, opts) {
     const town = createTown(seed, opts);
     const rng = makeRng('sim|' + seed);
+    const rules = readRules(opts);
     const n = town.residents.length;
     const owe = [];
     for (let i = 0; i < n; i++) owe.push(new Array(n).fill(0));
@@ -239,31 +272,75 @@
     for (const d of town.debts) adjust(d.from, d.to, d.amount);
 
     const people = town.residents.map((r) => ({ id: r.id, cash: r.cash, timesHeld: 0, hoursHeld: 0 }));
-    const usedStains = new Set();
-    const usedGeneric = new Set();
+
+    // 镇上的每张百元钞。0 号是外乡人带来的那张，页面跟着的就是它；其余的只有开了“第二位外乡人”才有。
+    // 后来几张的编号用单独的随机数抽，不打扰小镇和故事本身的随机数。
+    const MULTI = rules.bills > 1;
+    const serialRng = MULTI ? makeRng('notes|' + seed) : null;
+    const notes = [];
+    for (let j = 0; j < rules.bills; j++) {
+      let serial = town.serial;
+      while (j > 0 && notes.some((x) => x.serial === serial)) serial = makeSerial(serialRng);
+      notes.push({
+        id: j,
+        serial,
+        holder: -1, // -1：钞票还在外乡人兜里
+        arriveDay: 1 + j, // 第 j 位外乡人第 j+1 天早上进镇
+        wear: 0,
+        marks: [],
+        path: [],
+        heldFor: 0,
+        movedToday: false,
+        idleDays: 0,
+        usedStains: new Set(),
+        usedGeneric: new Set(),
+        stats: {
+          hands: 0,
+          holders: new Set(),
+          debtRepaid: 0,
+          commerce: 0,
+          iouCreated: 0,
+          forgiven: 0,
+          idleHours: 0,
+          longestHold: { id: -1, hours: 0 },
+        },
+      });
+    }
+    // 每个人上一次拿到（任何一张）钞票的钟点，以工抵债要用
+    const lastTouch = rules.workoff ? new Array(n).fill(DAY_START) : null;
 
     const state = {
       hour: DAY_START, // 从第 1 天 07:00 开始；hour 是自第 1 天 0 点起的小时数
-      holder: -1, // -1：钞票还在外乡人兜里
       owe,
       people,
-      bill: { wear: 0, marks: [], path: [] },
-      stats: {
-        hands: 0,
-        holders: new Set(),
-        debtRepaid: 0,
-        commerce: 0,
-        iouCreated: 0,
-        forgiven: 0,
-        idleHours: 0,
-        longestHold: { id: -1, hours: 0 },
+      bill: notes[0], // 页面跟着的那张
+      bills: notes,
+      stats: notes[0].stats,
+      ruleStats: {
+        refused: 0, // 赊账被拒的次数
+        refusedCash: 0, // 被拒后当场现买的钱
+        patronage: 0, // 照顾生意的买卖总额
+        patronageNeedy: 0, // 其中特意去欠债人家买的
+        passedOn: 0, // 收了现钱转手还账的钱
+        workdays: 0,
+        workedOff: 0, // 以工抵掉的欠账
+        clearings: 0, // 开过几回清账
+        cleared: 0, // 清账勾销掉的欠账
       },
-      movedToday: false,
-      idleDays: 0,
-      heldFor: 0,
+      moneyIn: 0, // 外乡人留在镇上的钱：每张钞票的面值减去找走的零钱
       grossDebt: [],
       initialGross: 0,
     };
+    // state.holder / heldFor / movedToday / idleDays 指 0 号钞票。
+    for (const key of ['holder', 'heldFor', 'movedToday', 'idleDays']) {
+      Object.defineProperty(state, key, {
+        enumerable: true,
+        get: () => notes[0][key],
+        set: (v) => {
+          notes[0][key] = v;
+        },
+      });
+    }
     state.initialGross = grossDebt();
     state.grossDebt.push({ hour: state.hour, value: state.initialGross });
 
@@ -293,45 +370,72 @@
       return who;
     }
 
+    // a 欠别人的总数
+    function payables(a) {
+      let total = 0;
+      for (let b = 0; b < n; b++) if (owe[a][b] > 0) total += owe[a][b];
+      return total;
+    }
+
+    // a 净欠多少：欠别人的减去别人欠自己的
+    function netDebt(a) {
+      let total = 0;
+      for (let b = 0; b < n; b++) total += owe[a][b];
+      return total;
+    }
+
     function moveCash(from, to, amount) {
       people[from].cash -= amount;
       people[to].cash += amount;
     }
 
-    function maybeMark(who, events) {
+    // 只有一张钞票时事件不带 bill 字段，和原版一字不差。
+    function tag(ev, note) {
+      if (MULTI) ev.bill = note.id;
+      return ev;
+    }
+
+    function holdsNote(id) {
+      for (const note of notes) if (note.holder === id) return true;
+      return false;
+    }
+
+    function maybeMark(note, who, events) {
       if (!rng.chance(0.08)) return;
       const r = town.residents[who];
       let text = null;
-      if (!usedStains.has(r.trade.id) && rng.chance(0.6)) {
-        usedStains.add(r.trade.id);
+      if (!note.usedStains.has(r.trade.id) && rng.chance(0.6)) {
+        note.usedStains.add(r.trade.id);
         text = '沾上了' + r.trade.shop + '的' + r.trade.stain;
       } else {
-        const left = GENERIC_MARKS.filter((m) => !usedGeneric.has(m));
+        const left = GENERIC_MARKS.filter((m) => !note.usedGeneric.has(m));
         if (!left.length) return;
         const tpl = rng.pick(left);
-        usedGeneric.add(tpl);
+        note.usedGeneric.add(tpl);
         text = tpl;
       }
       const mark = { hour: state.hour, who, text };
-      state.bill.marks.push(mark);
-      state.bill.wear += 2;
-      events.push({ type: 'mark', hour: state.hour, who, text });
+      note.marks.push(mark);
+      note.wear += 2;
+      events.push(tag({ type: 'mark', hour: state.hour, who, text }, note));
     }
 
-    function moveBill(from, to, events) {
-      state.holder = to;
-      state.movedToday = true;
-      state.idleDays = 0;
-      if (from >= 0 && state.heldFor > state.stats.longestHold.hours) {
-        state.stats.longestHold = { id: from, hours: state.heldFor };
+    function moveBill(note, from, to, events) {
+      const st = note.stats;
+      note.holder = to;
+      note.movedToday = true;
+      note.idleDays = 0;
+      if (from >= 0 && note.heldFor > st.longestHold.hours) {
+        st.longestHold = { id: from, hours: note.heldFor };
       }
-      state.heldFor = 0;
-      state.stats.hands++;
-      state.stats.holders.add(to);
+      note.heldFor = 0;
+      st.hands++;
+      st.holders.add(to);
       people[to].timesHeld++;
-      state.bill.wear += rng.int(1, 3) / 10; // 每过一次手磨损一点点
-      state.bill.path.push({ hour: state.hour, from, to });
-      maybeMark(to, events);
+      if (lastTouch) lastTouch[to] = state.hour;
+      note.wear += rng.int(1, 3) / 10; // 每过一次手磨损一点点
+      note.path.push({ hour: state.hour, from, to });
+      maybeMark(note, to, events);
     }
 
     // 零钱不够找时，付钱的人从对方铺子里挑几样东西凑数：从贵到便宜，每样最多一份，最多三样。
@@ -377,9 +481,10 @@
       return result;
     }
 
-    function payWithBill(a, b, events, base) {
+    function payWithBill(note, a, b, events, base) {
+      const st = note.stats;
       const owed = owe[a][b];
-      moveBill(a, b, events);
+      moveBill(note, a, b, events);
       adjust(a, b, -BILL);
       const ev = Object.assign(base, {
         hour: state.hour,
@@ -401,10 +506,10 @@
         adjust(a, b, -ev.cashTopUp);
       }
       ev.remaining = Math.max(0, owe[a][b]);
-      ev.extras.forEach((x) => (state.stats.commerce += x.price));
-      state.stats.iouCreated += ev.iou;
-      state.stats.forgiven += ev.forgiven;
-      events.push(ev);
+      ev.extras.forEach((x) => (st.commerce += x.price));
+      st.iouCreated += ev.iou;
+      st.forgiven += ev.forgiven;
+      events.push(tag(ev, note));
       return ev;
     }
 
@@ -418,32 +523,33 @@
       return rng.chance(0.25) ? creditors[0] : -2;
     }
 
-    function holderActs(events) {
-      const h = state.holder;
+    // 持有人拿着一张钞票拿主意；手里有几张，每张各拿一次主意。
+    function holderActs(note, events) {
+      const h = note.holder;
       const me = town.residents[h];
       if (biggestCreditor(h) >= 0) {
         if (!rng.chance(0.25 + 0.5 * (1 - me.thrift))) return false;
         const creditor = chooseCreditor(h);
-        if (creditor === -2) return tryBuy(h, events, true); // 都找不开，先去买点东西把整钞破开
+        if (creditor === -2) return tryBuy(note, h, events, true); // 都找不开，先去买点东西把整钞破开
         if (creditor < 0) return false;
         const owed = owe[h][creditor];
         // 零钱够的话，精打细算的人舍不得破开整钞，谁也不会为几块钱的小账破开它。
         if (owed < BILL && people[h].cash >= owed && (me.thrift > 0.6 || owed <= 20)) {
           moveCash(h, creditor, owed);
           adjust(h, creditor, -owed);
-          events.push({ type: 'payCash', hour: state.hour, from: h, to: creditor, amount: owed });
+          events.push(tag({ type: 'payCash', hour: state.hour, from: h, to: creditor, amount: owed }, note));
           return false;
         }
-        const ev = payWithBill(h, creditor, events, { type: 'repay' });
-        state.stats.debtRepaid += Math.min(ev.owed, BILL);
+        const ev = payWithBill(note, h, creditor, events, { type: 'repay' });
+        note.stats.debtRepaid += Math.min(ev.owed, BILL);
         return true;
       }
       if (!rng.chance(0.08 + 0.3 * (1 - me.thrift))) return false;
-      return tryBuy(h, events, false);
+      return tryBuy(note, h, events, false);
     }
 
     // 想买点东西：先在常去的几家里挑一家找得开的；都找不开，多半就不买了。
-    function tryBuy(h, events, breaking) {
+    function tryBuy(note, h, events, breaking) {
       const me = town.residents[h];
       const shops = rng.chance(0.75) ? rng.shuffle(me.favorites) : [pickOther(h)];
       let choice = null;
@@ -461,8 +567,8 @@
       }
       if (!choice || (choice.risky && !rng.chance(0.3))) return false;
       adjust(h, choice.shop, choice.it[1]);
-      state.stats.commerce += choice.it[1];
-      payWithBill(h, choice.shop, events, { type: 'buy', item: choice.it[0], price: choice.it[1], breaking });
+      note.stats.commerce += choice.it[1];
+      payWithBill(note, h, choice.shop, events, { type: 'buy', item: choice.it[0], price: choice.it[1], breaking });
       return true;
     }
 
@@ -472,21 +578,42 @@
       return b;
     }
 
-    // 钞票之外，镇上也在过日子：有人赊账，有人拿零钱还账。
+    // 赊账。开了“赊账有度”，欠得太多的人就赊不到；零钱够的可以当场现买。
+    function credit(buyer, shop, it, events) {
+      const price = it[1];
+      const before = owe[buyer][shop];
+      if (rules.creditCap && before + price > 0) {
+        const after = payables(buyer) - Math.max(0, before) + (before + price);
+        if (after > rules.creditCap.cap) {
+          const ev = { type: 'refused', hour: state.hour, from: buyer, to: shop, item: it[0], price, total: payables(buyer), paid: 0 };
+          if (people[buyer].cash >= price) {
+            moveCash(buyer, shop, price); // 现买：一手交钱一手交货
+            ev.paid = price;
+            state.ruleStats.refusedCash += price;
+          }
+          state.ruleStats.refused++;
+          events.push(ev);
+          return;
+        }
+      }
+      adjust(buyer, shop, price);
+      events.push({ type: 'credit', hour: state.hour, from: buyer, to: shop, item: it[0], price });
+    }
+
+    // 钞票之外，镇上也在过日子：有人赊账，有人拿零钱还账。手里攥着整钞的人不在此列。
     function townLife(events) {
       if (rng.chance(0.07)) {
         const buyer = rng.int(0, n - 1);
-        if (buyer !== state.holder) {
+        if (!holdsNote(buyer)) {
           const shop = rng.pick(town.residents[buyer].favorites);
           const it = rng.pick(town.residents[shop].trade.items);
-          adjust(buyer, shop, it[1]);
-          events.push({ type: 'credit', hour: state.hour, from: buyer, to: shop, item: it[0], price: it[1] });
+          credit(buyer, shop, it, events);
         }
       }
       if (rng.chance(0.08)) {
         const payer = rng.int(0, n - 1);
         const creditor = biggestCreditor(payer);
-        if (payer !== state.holder && creditor >= 0 && people[payer].cash > 0) {
+        if (!holdsNote(payer) && creditor >= 0 && people[payer].cash > 0) {
           const amount = Math.min(people[payer].cash, owe[payer][creditor]);
           moveCash(payer, creditor, amount);
           adjust(payer, creditor, -amount);
@@ -495,14 +622,150 @@
       }
     }
 
-    function arrive(events) {
+    // ----- 照顾生意 -----
+
+    // 镇上谁手头紧，大家心里有数：按净欠多少挑一家，欠得越多越常被照顾。
+    function pickNeedy(buyer) {
+      const weights = [];
+      let total = 0;
+      for (let i = 0; i < n; i++) {
+        const w = i === buyer ? 0 : Math.max(0, netDebt(i));
+        weights.push(w);
+        total += w;
+      }
+      if (total <= 0) return -1;
+      let r = rng() * total;
+      for (let i = 0; i < n; i++) {
+        if (weights[i] > 0 && r < weights[i]) return i;
+        r -= weights[i];
+      }
+      for (let i = n - 1; i >= 0; i--) if (weights[i] > 0) return i;
+      return -1;
+    }
+
+    // 手头宽裕的人拿闲钱出门买点东西。
+    function goShopping(events) {
+      const P = rules.patronage;
+      if (!rng.chance(P.rate)) return;
+      const buyer = rng.int(0, n - 1);
+      if (holdsNote(buyer) || netDebt(buyer) > 0) return;
+      const me = town.residents[buyer];
+      const spare = people[buyer].cash - (P.reserve + Math.round(P.reserveThrift * me.thrift));
+      if (spare <= 0) return;
+      let shop = -1;
+      let needy = false;
+      if (rng.chance(P.needyShare)) {
+        shop = pickNeedy(buyer);
+        needy = shop >= 0;
+      }
+      if (shop < 0) shop = rng.pick(me.favorites);
+      const owedToMe = Math.max(0, owe[shop][buyer]);
+      const items = town.residents[shop].trade.items.filter((it) => it[1] - Math.min(it[1], owedToMe) <= spare);
+      if (!items.length) return;
+      const it = rng.pick(items);
+      const offset = Math.min(it[1], owedToMe); // 对方欠着自己的，先拿货抵账
+      const cash = it[1] - offset;
+      adjust(buyer, shop, offset);
+      moveCash(buyer, shop, cash);
+      state.ruleStats.patronage += it[1];
+      if (needy) state.ruleStats.patronageNeedy += it[1];
+      events.push({ type: 'cashBuy', hour: state.hour, from: buyer, to: shop, item: it[0], price: it[1], cash, offset, needy });
+      // 收了现钱、自己又欠着债的人，转手就还给欠得最多的那家
+      const creditor = cash > 0 ? biggestCreditor(shop) : -1;
+      if (creditor >= 0) {
+        const amount = Math.min(cash, people[shop].cash, owe[shop][creditor]);
+        moveCash(shop, creditor, amount);
+        adjust(shop, creditor, -amount);
+        state.ruleStats.passedOn += amount;
+        events.push({ type: 'payCash', hour: state.hour, from: shop, to: creditor, amount, background: true, fromSale: true });
+      }
+    }
+
+    // ----- 以工抵债 -----
+
+    // 欠了一身债、手头没钱、又好些天没摸到钞票的人，去最大的债主那里帮一天工，工钱直接抵账。
+    // 这等于债主花工钱买了一天的活：身家从债主挪到帮工的人。
+    function workOff(events) {
+      const W = rules.workoff;
+      for (let i = 0; i < n; i++) {
+        if (holdsNote(i) || people[i].cash >= W.wage) continue;
+        if (payables(i) < W.threshold) continue;
+        const days = Math.floor((state.hour - lastTouch[i]) / 24);
+        if (days < W.idleDays || !rng.chance(W.chance)) continue;
+        const boss = biggestCreditor(i);
+        const owed = owe[i][boss];
+        const amount = Math.min(owed, W.wage);
+        adjust(i, boss, -amount);
+        state.ruleStats.workdays++;
+        state.ruleStats.workedOff += amount;
+        events.push({ type: 'workoff', hour: state.hour, from: i, to: boss, amount, owed, remaining: owe[i][boss], days });
+      }
+    }
+
+    // ----- 三角债清理 -----
+
+    // 从 s 出发、只经过编号比 s 大的人、再回到 s 的最短欠账圈（广度优先，邻居按编号从小到大）。
+    function cycleThrough(s) {
+      const prev = new Array(n).fill(-1);
+      const seen = new Array(n).fill(false);
+      seen[s] = true;
+      let frontier = [s];
+      while (frontier.length) {
+        const next = [];
+        for (const a of frontier) {
+          for (let b = 0; b < n; b++) {
+            if (owe[a][b] <= 0) continue;
+            if (b === s) {
+              const cycle = [];
+              for (let v = a; v !== s; v = prev[v]) cycle.push(v);
+              cycle.push(s);
+              return cycle.reverse(); // [s, …, a]：每个人欠下一个人，a 欠 s
+            }
+            if (b < s || seen[b]) continue;
+            seen[b] = true;
+            prev[b] = a;
+            next.push(b);
+          }
+        }
+        frontier = next;
+      }
+      return null;
+    }
+
+    // 一圈人里谁也不用掏钱：每个人欠出去的和别人欠自己的同时少掉同一个数，身家都不变。
+    function clearCycles(events) {
+      const cycles = [];
+      let cancelled = 0;
+      for (let s = 0; s < n; s++) {
+        for (let cycle = cycleThrough(s); cycle; cycle = cycleThrough(s)) {
+          let amount = Infinity;
+          for (let k = 0; k < cycle.length; k++) amount = Math.min(amount, owe[cycle[k]][cycle[(k + 1) % cycle.length]]);
+          for (let k = 0; k < cycle.length; k++) adjust(cycle[k], cycle[(k + 1) % cycle.length], -amount);
+          cycles.push({ members: cycle, amount });
+          cancelled += amount * cycle.length;
+        }
+      }
+      state.ruleStats.clearings++;
+      state.ruleStats.cleared += cancelled;
+      events.push({ type: 'clearing', hour: state.hour, cycles, cancelled });
+    }
+
+    function arrive(note, events) {
       const inn = 0;
-      moveBill(-1, inn, events);
+      const at = events.length; // 'arrive' 排在这张钞票自己的痕迹事件前面
+      moveBill(note, -1, inn, events);
       const change = Math.min(people[inn].cash, BILL - ROOM_PRICE);
       people[inn].cash -= change; // 找给外乡人的零钱跟着外乡人离开小镇
-      state.stats.commerce += ROOM_PRICE;
-      events.unshift({ type: 'arrive', hour: state.hour, to: inn, price: ROOM_PRICE, change, short: BILL - ROOM_PRICE - change });
-      state.arrivalChange = change;
+      note.stats.commerce += ROOM_PRICE;
+      const ev = { type: 'arrive', hour: state.hour, to: inn, price: ROOM_PRICE, change, short: BILL - ROOM_PRICE - change };
+      if (MULTI) {
+        ev.bill = note.id;
+        ev.serial = note.serial;
+      }
+      events.splice(at, 0, ev);
+      note.arrivalChange = change;
+      state.moneyIn += BILL - change;
+      if (note.id === 0) state.arrivalChange = change;
     }
 
     function step() {
@@ -510,38 +773,53 @@
       const events = [];
       const hh = state.hour % 24;
       if (hh < DAY_START || hh >= DAY_END) {
-        if (state.holder >= 0) people[state.holder].hoursHeld++;
-        state.heldFor++;
+        for (const note of notes) {
+          if (note.holder >= 0) people[note.holder].hoursHeld++;
+          note.heldFor++;
+        }
         return events;
       }
       if (hh === DAY_START) {
         events.push({ type: 'dawn', hour: state.hour, day: dayOf(state.hour) });
-        state.movedToday = false;
+        for (const note of notes) note.movedToday = false;
       }
-      if (state.holder < 0) {
-        if (hh >= 8) arrive(events);
-      } else {
-        people[state.holder].hoursHeld++;
-        state.heldFor++;
-        const moved = holderActs(events);
-        if (!moved) state.stats.idleHours++;
+      let inTown = false;
+      for (const note of notes) {
+        if (note.holder < 0) {
+          if (hh >= 8 && dayOf(state.hour) >= note.arriveDay) arrive(note, events);
+        } else {
+          inTown = true;
+          people[note.holder].hoursHeld++;
+          note.heldFor++;
+          if (!holderActs(note, events)) note.stats.idleHours++;
+        }
+      }
+      // 镇上的日常从外乡人进镇的下一个钟头开始，每小时一回，跟有几张钞票无关。
+      if (inTown) {
         townLife(events);
+        if (rules.patronage) goShopping(events);
+        if (rules.workoff && hh === rules.workoff.hour) workOff(events);
       }
-      if (hh === DAY_END - 1 && state.holder >= 0 && !state.movedToday) {
-        state.idleDays++;
-        events.push({ type: 'idle', hour: state.hour, who: state.holder, days: state.idleDays });
+      if (rules.netting && hh === rules.netting.hour && dayOf(state.hour) % rules.netting.every === 0) clearCycles(events);
+      if (hh === DAY_END - 1) {
+        for (const note of notes) {
+          if (note.holder >= 0 && !note.movedToday) {
+            note.idleDays++;
+            events.push(tag({ type: 'idle', hour: state.hour, who: note.holder, days: note.idleDays }, note));
+          }
+        }
       }
       state.grossDebt.push({ hour: state.hour, value: grossDebt() });
       return events;
     }
 
-    // 一直走到钞票换手（或者走满 limit 小时），返回这期间所有事件。
+    // 一直走到 0 号钞票换手（或者走满 limit 小时），返回这期间所有事件。
     function stepUntilMove(limit) {
       const all = [];
-      const before = state.stats.hands;
+      const before = notes[0].stats.hands;
       for (let i = 0; i < (limit || 24 * 14); i++) {
         all.push.apply(all, step());
-        if (state.stats.hands !== before) break;
+        if (notes[0].stats.hands !== before) break;
       }
       return all;
     }
@@ -549,18 +827,30 @@
     function totalMoney() {
       let total = 0;
       for (const p of people) total += p.cash;
-      return total + (state.holder >= 0 ? BILL : 0);
+      for (const note of notes) if (note.holder >= 0) total += BILL;
+      return total;
+    }
+
+    // 某人手里攥着几张整钞
+    function notesHeld(id) {
+      let count = 0;
+      for (const note of notes) if (note.holder === id) count++;
+      return count;
     }
 
     return {
       town,
       state,
+      rules,
       step,
       stepUntilMove,
       grossDebt,
       debtEdges,
       totalMoney,
-      condition: () => Math.max(5, Math.round(100 - state.bill.wear)),
+      notesHeld,
+      payables,
+      netDebt,
+      condition: (k) => Math.max(5, Math.round(100 - notes[k || 0].wear)),
     };
   }
 
@@ -581,6 +871,8 @@
     makeRng,
     createTown,
     createSim,
+    RULE_KEYS,
+    RULE_PARAMS,
     thriftLabel,
     dayOf,
     clock,
